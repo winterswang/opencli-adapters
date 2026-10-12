@@ -17,6 +17,8 @@ echo "== 源目录: $DIR"
 echo
 
 echo "-- 卸载旧版本（若存在）"
+# 迁移前后使用不同插件 ID；旧 ID 可能仍指向 crawler 仓里的工作副本。
+opencli plugin uninstall "xueqiu-adapters" >/dev/null 2>&1 || true
 opencli plugin uninstall "$NAME" >/dev/null 2>&1 || true
 
 echo "-- 安装"

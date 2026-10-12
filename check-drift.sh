@@ -86,7 +86,7 @@ fi
 
 # ── 5. BLOCK_GUARD 是否与 Python 侧唯一实现同源 ─────────────────────────
 echo "== BLOCK_GUARD 与 xueqiu_analyzer.waf.CONTENT_PATTERNS 是否同源"
-SYNC="$DIR/../scripts/sync_waf_patterns.py"
+SYNC="$DIR/scripts/sync_waf_patterns.py"
 if [ -f "$SYNC" ]; then
   if python3 "$SYNC" --check >/tmp/waf_sync_check.out 2>&1; then
     sed 's/^/  /' /tmp/waf_sync_check.out

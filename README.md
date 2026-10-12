@@ -1,5 +1,10 @@
 # opencli-adapters — 雪球 / 小红书适配器（版本化插件）
 
+本项目从 `xueqiu-crawler/opencli-adapters` 独立提取，保留原有插件源码提交历史。插件 ID
+已更名为 `opencli-adapters`；消费者仓库与用户级 Skill 的引用将在后续迁移阶段更新。
+WAF 模式由 `xueqiu-analyzer-skill/src/xueqiu_analyzer/waf.py` 唯一提供，
+`scripts/sync_waf_patterns.py` 只生成插件内的 JavaScript 副本。
+
 雪球、小红书抓取用的 **opencli 本地适配器**。以 opencli 官方 **plugin** 形式安装，
 不再依赖 `~/.opencli/clis/` 裸覆盖 —— 后者会被 opencli 升级 / smart-sync 覆盖或删除，
 2026-09-30 已实际发生过一次，导致适配器丢失。
@@ -8,7 +13,7 @@
 > 错误码、行为契约、**改动检查表**与已知盲区。本文件讲「为什么这样设计」，契约文件讲
 > 「改了会影响谁」。
 >
-> agent 会话会自动加载 `xueqiu-adapters` skill（用户级），它指向同一份契约。
+> 用户级 Skill 目前仍使用旧名称 `xueqiu-adapters`；它的路径更新属于后续迁移阶段。
 
 ## 为什么用 plugin 而不是 `~/.opencli/clis/`
 
@@ -193,10 +198,30 @@ FrontierAgent 的 `plugins/tools/_platform_cli.py` 同理，只保留自己的�
 
 脚本做三件事：安装（或重装）插件、校验命令已注册、打印 `opencli adapter status`。
 
+本项目的 GitHub Actions 在 `v<version>` tag 推送后运行质量门并创建 GitHub Release；
+发版前将 `package.json` 与 `opencli-plugin.json` 的版本同步递增，再创建匹配的 tag。
+
+## 本地验证
+
+需要 Node.js 20+、Python 3.11+、pytest、ruff，以及 analyzer 仓提供的 WAF 唯一规则源：
+
+```bash
+git clone https://github.com/winterswang/xueqiu-analyzer-skill.git _deps/xueqiu-analyzer-skill
+python3 -m pip install -e _deps/xueqiu-analyzer-skill pytest==7.4.3 ruff==0.12.4
+ruff check .
+ruff format --check .
+python3 scripts/sync_waf_patterns.py --check
+python3 -m pytest tests/ -q
+```
+
+GitHub Actions 会自动检出 analyzer，并运行同一组检查。生成器只改写这 4 个文件中的 WAF
+正则，不会改 analyzer 的规则源。
+
 等价的手工命令：
 
 ```bash
 opencli plugin uninstall xueqiu-adapters 2>/dev/null || true
+opencli plugin uninstall opencli-adapters 2>/dev/null || true
 opencli plugin install "file://$PWD"
 opencli list | grep -E 'xueqiu|xiaohongshu'
 ```
@@ -208,9 +233,15 @@ opencli list | grep -E 'xueqiu|xiaohongshu'
 
 ```bash
 ./check-drift.sh
+python3 scripts/sync_waf_patterns.py --check
 ```
 
 ## 已知取舍
+
+- **迁移分阶段进行**：本仓已独立建仓并通过自测，**运行中的插件已在 2026-10-12 切到本仓**
+  （`~/.opencli/plugins/opencli-adapters` → 本目录，锁在 commit `a5fecba`；旧 ID
+  `xueqiu-adapters` 已卸载，`~/.opencli/clis/` 为空）。**消费者仓与用户级 Skill 的引用仍是
+  旧名称、旧路径**，属后续迁移阶段；切换后还没有消费方真实调用过。
 
 - **`search.js` 钉住了一个旧式适配器**。官方基线的 `xiaohongshu/search.js` 已重写为
   带 MutationObserver 的新版，我们的覆盖是旧的 DOM 抓取实现。当前可用，

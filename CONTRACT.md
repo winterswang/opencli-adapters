@@ -1,4 +1,4 @@
-# xueqiu-adapters 接口契约
+# opencli-adapters 接口契约
 
 > **这份文件是契约，不是介绍。** 消费者（三个仓里的 Python 代码、以及 agent 会话）依赖下面写的
 > **每一个字段名、错误码与数值**。改插件前先看 [§6 改动检查表](#6-改动检查表)。
@@ -8,8 +8,12 @@
 **机器级插件**，不是某个仓的内部模块：
 
 ```
-~/.opencli/plugins/xueqiu-adapters  →  符号链接  →  <repo>/opencli-adapters/
+~/.opencli/plugins/opencli-adapters  →  符号链接  →  <repo>/opencli-adapters/
 ```
+
+本仓已独立提取并把插件 ID 改为 `opencli-adapters`，且已于 2026-10-12 完成安装切换：运行中的
+插件现在就是本仓（锁在 commit `a5fecba`）。消费者仓与用户级 Skill 的引用仍在旧名称/旧路径，
+属后续迁移阶段。
 
 改工作区源码**立即生效**（符号链接），所以「改完要跑一遍测试」不是可选项。
 
@@ -139,7 +143,7 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 | 改**输出字段名** | 所有消费方解析处（§2 各命令的「消费者依赖」行）+ `CONTRACT.md` 本节 | ⚠️ **没有自动检查**（见 §7 盲区） |
 | 改**命令名** | `scripts/analyze_opencli_usage.py` 的 `SITE_OPERATIONS`（**有测试守**）+ `install.sh` 的校验清单 + README 文件表（**无自动检查，靠人**） | `tests/test_opencli_command_names.py`（只覆盖 `SITE_OPERATIONS` 那半边；漏改 `install.sh` 它不会红，要到执行 `install.sh` 时才退出 1） |
 | 改**错误码/错误类** | 消费方的 `BLOCKED_WAF` / `EMPTY_RESULT` / `风控验证页` 判定 | ⚠️ 无自动检查 |
-| 改**节流参数**（`min/max/long_pause`） | 三个仓的调用方超时（`opencli_extractor.py` / `fetcher_opencli.py` / `detail_fetcher.py`） | `test_opencli_throttle.py`（crawler）+ `test_opencli_contract.py`（monitor） |
+| 改**节流参数**（`min/max/long_pause`） | 三个仓的调用方超时（`opencli_extractor.py` / `fetcher_opencli.py` / `detail_fetcher.py`） | 本仓 `test_plugin_policy.py` + 后续消费方契约测试 |
 | 改**`min_delay_s`** 低于 6 | `peak.mjs` 的 `PEAK_IMPOSSIBLE` 判据 | `test_builtin_sites_declare_web_with_pacing` |
 | 启用**并发闸** | 调用方超时 120 → ~150s（两个仓） | `test_concurrency_gate_defaults_to_observe_only` |
 | 改**域名别名表** | 已有键必须映射回自己（换名 = 排期清零） | `test_known_domains_alias_back_to_their_existing_keys` |
@@ -159,11 +163,9 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 ## 8. 改完之后怎么验证
 
 ```bash
-cd xueqiu-crawler && ruff check . && ruff format --check . && python3 -m pytest tests/ -q
-cd xueqiu-monitor && TZ=Asia/Shanghai python3 -m pytest tests/ -q
-cd xueqiu-analyzer-skill && python3 -m pytest tests/ -q
-# 插件是否还被 opencli 正常加载（一个导出名写错就会静默失效）
-opencli list 2>&1 | grep -iE "plugin|failed|duplicate|not defined"   # 应无输出
-# 与上游的漂移（要本机装了 opencli）
-cd opencli-adapters && ./check-drift.sh
+ruff check . && ruff format --check . && python3 -m pytest tests/ -q
+python3 scripts/sync_waf_patterns.py --check
+./check-drift.sh  # 要本机安装 opencli
 ```
+
+消费者仓和运行中插件的切换验证，等后续迁移阶段执行；本仓 CI 不会触碰消费者工作区或用户安装。
