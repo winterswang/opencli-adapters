@@ -21,7 +21,7 @@ echo
 
 # ── 1. 覆盖型：上游若已等于我们，覆盖即可删除 ────────────────────────────
 echo "== 覆盖型适配器（上游若已修好，删掉本地文件改用基线）"
-for pair in "comments.js:xueqiu/comments.js" "search.js:xiaohongshu/search.js"; do
+for pair in "comments.js:xueqiu/comments.js"; do
   ours="${pair%%:*}"; base="${pair##*:}"
   if [ ! -f "$BASE/$base" ]; then
     echo "  ??   $ours — 基线中已不存在 $base"

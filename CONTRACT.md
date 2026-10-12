@@ -89,14 +89,17 @@
 | 输出字段 | `id`、`author`、`text`、`likes`、`created_at`、`reply_to` |
 | 错误 | `ArgumentError`（URL 形态不对）、`CommandExecutionError` |
 
-### 2.7 `opencli xiaohongshu search <query>`
+### 2.7 ~~`opencli xiaohongshu search <query>`~~ —— **覆盖已移除（2026-10-13），改用官方基线**
 
 | | |
 |---|---|
-| 入参 | `query`（位置参数，必填）、`limit`（int）、`sort`（**只支持 `comprehensive`**）、`note-type`、`publish-time`、`scope`、`location` |
-| 输出字段 | `rank`、`title`、`author`、`likes`、`published_at`、`url` |
-| 错误 | `ArgumentError`（空 query / 不支持的 `--sort` 或其它选项）、`CliError`（风控） |
-| 备注 | **无仓库代码调用它**；实际调用者是 agent 会话/手敲（见 §7） |
+| 现状 | 本插件**不再提供** `search.js`。命令仍然存在，由 opencli 官方基线提供 |
+| 为什么移除 | 实测对比（同一关键词、同一账号、相隔 12 秒）：**官方基线正确识别风控并抛 `SECURITY_BLOCK`；我们的覆盖静默返回 `[]`（exit=0、stderr 空、台账记 `ok=True`）** —— 正是 `b9a3196` 声称修好、却在我们自己身上复现的那个坑。官方还多支持 `--sort`/`--note-type`/`--publish-time`/`--scope`/`--location` 五个筛选（靠筛选面板 UI 自动化实现，非 URL 参数），并带 MutationObserver 稳健性 |
+| 治理不受影响 | 限频与台账由 `rate-limit.js` 的钩子按 **registry** 生效，与命令由谁实现无关。实测官方那次调用台账里 `throttled=True`，被正常记录 |
+| 调用方 | **无仓库代码调用**；实际调用者是 agent 会话/手敲（见 §7） |
+| 命令契约 | 以官方基线为准：`opencli xiaohongshu search --help`。⚠️ 输出列仍是 `rank,title,author,likes,published_at,url`，但 **`published_at` 语义变了** —— 官方是从 note-id 推出的日期（如 `2025-12-06`），我们那份是 DOM 卡片文本（如 `3天前`） |
+
+> **不要再把它加回来**：唯一曾经占优的维度是"风控提示语认得多"，而实测证明那个优势不存在（我们反而漏了真实发生的一种）。若将来需要更宽的检测，正确做法是把模式**提给上游**，不是在本地重新长一份覆盖。
 
 ## 3. 错误码契约
 
@@ -158,7 +161,7 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 3. **不设 `XUEQIU_CALL_SOURCE` 的调用** → 台账里记 `manual`，与实际手敲无法区分。已知有两个来源：**agent 会话**（批量抓取）与**不在册的脚本**。`analyze_opencli_usage.py` 把它们聚合成「管理外流量」，靠两条腿：**长驻进程按 `ppid` 聚簇**，**每次调用各起一个 shell** 的散点再**按「域名/命令」聚合**一次。两条腿都不完美——前者看不见逐条敲的会话（ppid 每次不同），后者认不出「是不是同一轮任务」，只说明「同一拨目标被打了 N 次」。
 4. **`XUEQIU_OPENCLI_CALL_ID` 目前无人设置** → 两账 1:1 join 的机制空转，实际靠 `ppid` + 时间窗。
 5. **`check-drift.sh` 不在 CI** → 升级 `@jackwener/opencli` 后要人记得手动跑。
-6. **`xiaohongshu search` 在仓库里没有调用方** → 它唯一的真实消费者是 agent 会话/手敲，属于「在用但不在册」。
+6. **`xiaohongshu search` 在仓库里没有调用方** → 它唯一的真实消费者是 agent 会话/手敲，属于「在用但不在册」。（2026-10-13 起该命令由**官方基线**提供，本插件不再覆盖 —— 见 §2.7。这条盲区因此更隐蔽：它的实现根本不在我们仓里。）
 
 ## 8. 改完之后怎么验证
 

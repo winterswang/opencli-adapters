@@ -41,7 +41,7 @@ discoverClis(BUILTIN_CLIS) → discoverClis(USER_CLIS) → discoverPlugins()
 | `stock-notices.js` | xueqiu | `opencli xueqiu stock-notices` | 自研（官方基线无此命令） |
 | `user-articles.js` | xueqiu | `opencli xueqiu user-articles` | 自研（官方基线无此命令） |
 | `comments.js` | xueqiu | `opencli xueqiu comments` | 覆盖官方基线：3 处 `xueqiu.com` → `www.xueqiu.com`（风控页/405 规避） |
-| `search.js` | xiaohongshu | `opencli xiaohongshu search` | 覆盖官方基线：DOM 抓取 + `xsec_token` 直出，只支持 `--sort comprehensive` |
+| ~~`search.js`~~ | ~~xiaohongshu~~ | `opencli xiaohongshu search` | **2026-10-13 移除覆盖** —— 由官方基线提供。理由见 `CONTRACT.md` §2.7：实测官方能识别风控而我们的覆盖静默返回空 |
 | `article.js` | **web**（通用） | `opencli web article` | 自研；读取任意网页正文（跨站选择器链），输出 markdown |
 | `utils.js` | — | — | **非命令模块**，仅供 `stock-notices.js` 相对引用；是官方基线 `clis/xueqiu/utils.js` 的副本 |
 | `lib/*.js` | — | — | **非命令模块**（11 个）：`paths` / `env` / `util` / `lockfile` / `policy` / `domain-tables` / `domains` / `ratelimit` / `concurrency` / `requestlog` 由 `rate-limit.js` import；`xueqiu-symbol.js` 由 `news.js` / `stock-notices.js` import |
@@ -243,9 +243,11 @@ python3 scripts/sync_waf_patterns.py --check
   `xueqiu-adapters` 已卸载，`~/.opencli/clis/` 为空）。**消费者仓与用户级 Skill 的引用仍是
   旧名称、旧路径**，属后续迁移阶段；切换后还没有消费方真实调用过。
 
-- **`search.js` 钉住了一个旧式适配器**。官方基线的 `xiaohongshu/search.js` 已重写为
-  带 MutationObserver 的新版，我们的覆盖是旧的 DOM 抓取实现。当前可用，
-  但上游若修掉了旧版的痛点，应优先 `opencli adapter reset xiaohongshu` 回到基线。
+- ~~**`search.js` 钉住了一个旧式适配器**~~ —— **已于 2026-10-13 移除覆盖，改用官方基线**。
+  原文写的"上游若修掉了旧版的痛点，应优先回到基线"被实测证实了：同一关键词、
+  同一账号、相隔 12 秒跑两次，**官方正确抛 `SECURITY_BLOCK`，我们的覆盖静默返回 `[]`**
+  （exit=0、stderr 空、台账记 `ok=True`）—— 正是它声称修好的那个坑。官方还多支持 5 个筛选
+  并带 MutationObserver。详见 `CONTRACT.md` §2.7。
 - **`comments.js` 的 www 改写**若被上游采纳，本覆盖即可删除。
 - 本插件与 `scripts/opencli_extractor.py`（Python 侧调用方）配套，
   改命令签名时要同时改那边。
