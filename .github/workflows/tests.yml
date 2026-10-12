@@ -1,0 +1,52 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.12.4
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: winterswang/xueqiu-analyzer-skill
+          path: _deps/xueqiu-analyzer-skill
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest==7.4.3
+          pip install -e _deps/xueqiu-analyzer-skill
+      - name: Check generated WAF guards
+        run: python scripts/sync_waf_patterns.py --check
+      - name: Check JavaScript syntax
+        run: find . -maxdepth 2 -type f -name '*.js' -print0 | xargs -0 -n1 node --check && find lib -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Run plugin tests
+        run: python -m pytest tests/ -q
