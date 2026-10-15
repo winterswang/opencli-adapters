@@ -44,7 +44,7 @@ discoverClis(BUILTIN_CLIS) → discoverClis(USER_CLIS) → discoverPlugins()
 | ~~`search.js`~~ | ~~xiaohongshu~~ | `opencli xiaohongshu search` | **2026-10-13 移除覆盖** —— 由官方基线提供。理由见 `CONTRACT.md` §2.7：实测官方能识别风控而我们的覆盖静默返回空 |
 | `article.js` | **web**（通用） | `opencli web article` | 自研；读取任意网页正文（跨站选择器链），输出 markdown |
 | `utils.js` | — | — | **非命令模块**，仅供 `stock-notices.js` 相对引用；是官方基线 `clis/xueqiu/utils.js` 的副本 |
-| `lib/*.js` | — | — | **非命令模块**（11 个）：`paths` / `env` / `util` / `lockfile` / `policy` / `domain-tables` / `domains` / `ratelimit` / `concurrency` / `requestlog` 由 `rate-limit.js` import；`xueqiu-symbol.js` 由 `news.js` / `stock-notices.js` import |
+| `lib/*.js` | — | — | **非命令模块**（12 个）：`paths` / `env` / `util` / `lockfile` / `policy` / `domain-tables` / `domains` / `ratelimit` / `concurrency` / `requestlog` / **`cooldown`** 由 `rate-limit.js` import；`xueqiu-symbol.js` 由 `news.js` / `stock-notices.js` import |
 | `rate-limit.js` | —（全站点） | — | **非命令模块**：注册 `onBeforeExecute` 钩子，对**走 registry 的** opencli 调用统一跨进程限速（`browser` 子命令例外、通用站 `web` 按目标域名分流，均见下节） |
 
 > `utils.js` 只导出 `formatChinaDate` / `stripHtml` / `fetchXueqiuJson`。

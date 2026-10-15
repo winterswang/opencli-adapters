@@ -107,7 +107,8 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 
 | 类 | `code` | 退出码 | 消费者该怎么处理 |
 |---|---|---|---|
-| `CliError(code, …)` | 自定义：**`BLOCKED_WAF`**（雪球 `web article` 命中风控页）、**`SECURITY_BLOCK`**（小红书 `search` 命中「安全限制 / 账号异常」页） | 由插件指定 | **确定性信号，不要重试**（重试只会对着刚被拦的页面再打） |
+| `CliError(code, …)` | 自定义：**`BLOCKED_WAF`**（雪球 `web article` / `comments` 命中风控页）、**`SECURITY_BLOCK`**（小红书 `search` 命中「安全限制 / 账号异常」页） | 由插件指定 | **确定性信号，不要重试**（重试只会对着刚被拦的页面再打）；它也是 `lib/cooldown.js` 的熔断触发码之一 |
+| `BROWSER_CONNECT` | `BROWSER_CONNECT` | 69（SERVICE_UNAVAIL） | ⚠️ **可能是熔断器刻意拦下的**（它把 `OPENCLI_PROFILE` 指向不存在的 profile 让 routing 硬失败），**不是** daemon 挂了 —— 别重试、别当故障排查；先看 `~/.opencli/<域名键>-cooldown.json`。代价：这条路径约 45 秒才失败 |
 | `CommandExecutionError` | `COMMAND_EXEC` | GENERIC_ERROR | 可重试 |
 | `ArgumentError` | `ARGUMENT` | USAGE_ERROR | 别重试——参数错了，重试也一样 |
 | `EmptyResultError` | `EMPTY_RESULT` | EMPTY_RESULT | 「成功但为空」，**不是故障**（health 判定要能区分） |
@@ -134,8 +135,9 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 |---|---|---|
 | `~/.opencli/<域名键>-throttle.json` | 限频排期 `{next_at, calls, last_source}` | 插件 |
 | `~/.opencli/inflight/<域名键>/*.slot` | 在飞槽位（观测模式下也占位） | 插件 |
-| `~/.opencli/adapter-calls.jsonl` | 插件台账（schema 2） | 插件 |
-| `~/.opencli/rate-limits.json` | 用户策略覆盖（`sites` / `domains` / `defaults`） | 用户 |
+| `~/.opencli/<域名键>-cooldown.json` | **风控熔断**状态 `{until_ms, level, reason, last_trip_ms, trips}`（`lib/cooldown.js`）：命中 `RISK_CODES` 后该站点在冷却期内发不出请求，指数退避 1h→2h→…→24h，距上次命中超 `decay_s` 则 level 归零 | 插件 |
+| `~/.opencli/adapter-calls.jsonl` | 插件台账（schema 2）。被熔断拦下的调用记 `cooldown_active` / `skip_reason: cooldown_active` —— **它没发出任何请求**，统计站请求量时要剔除 | 插件 |
+| `~/.opencli/rate-limits.json` | 用户策略覆盖（`sites` / `domains` / `defaults`；`cooldown` 可每键覆盖，未声明键走默认：开、1h 起、24h 封顶） | 用户 |
 
 ## 6. 改动检查表
 
