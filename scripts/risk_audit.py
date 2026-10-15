@@ -49,6 +49,7 @@ BLOCK_CODES = frozenset({"RATE_LIMITED", "SECURITY_BLOCK", "BLOCKED_WAF"})
 
 # --------------------------------------------------------------------------- 载入
 
+
 def parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -88,6 +89,7 @@ def load(ledger: Path, site: str | None) -> list[dict]:
 
 # --------------------------------------------------------------------------- 分析
 
+
 def is_blocked(row: dict) -> bool:
     return row.get("error_code") in BLOCK_CODES
 
@@ -126,20 +128,24 @@ def block_segments(rows: list[dict], gap_min: float) -> list[dict]:
     for index, row in enumerate(rows):
         if not is_blocked(row):
             continue
-        if segments and (row["_at"] - segments[-1]["last"]) <= timedelta(minutes=gap_min):
+        if segments and (row["_at"] - segments[-1]["last"]) <= timedelta(
+            minutes=gap_min
+        ):
             segment = segments[-1]
             segment["last"] = row["_at"]
             segment["count"] += 1
             segment["codes"].update([row.get("error_code")])
             segment["indices"].append(index)
         else:
-            segments.append({
-                "start": row["_at"],
-                "last": row["_at"],
-                "count": 1,
-                "codes": Counter([row.get("error_code")]),
-                "indices": [index],
-            })
+            segments.append(
+                {
+                    "start": row["_at"],
+                    "last": row["_at"],
+                    "count": 1,
+                    "codes": Counter([row.get("error_code")]),
+                    "indices": [index],
+                }
+            )
     for segment in segments:
         segment["span_min"] = (segment["last"] - segment["start"]).total_seconds() / 60
     return segments
@@ -186,15 +192,19 @@ def recovery_gaps(rows: list[dict]) -> list[dict]:
     results = []
     for segment in block_segments(rows, 60.0):
         after = [row for row in rows if row["_at"] > segment["last"] and row.get("ok")]
-        results.append({
-            "block_start": segment["start"],
-            "block_last": segment["last"],
-            "span_min": segment["span_min"],
-            "first_ok_after": after[0]["_at"] if after else None,
-            "cooldown_min": (
-                (after[0]["_at"] - segment["last"]).total_seconds() / 60 if after else None
-            ),
-        })
+        results.append(
+            {
+                "block_start": segment["start"],
+                "block_last": segment["last"],
+                "span_min": segment["span_min"],
+                "first_ok_after": after[0]["_at"] if after else None,
+                "cooldown_min": (
+                    (after[0]["_at"] - segment["last"]).total_seconds() / 60
+                    if after
+                    else None
+                ),
+            }
+        )
     return results
 
 
@@ -232,6 +242,7 @@ def check_dupes(rows: list[dict], threshold_s: float = 3.0) -> list[tuple[dict, 
 
 # --------------------------------------------------------------------------- 输出
 
+
 def fmt(moment: datetime | None) -> str:
     return moment.astimezone(TZ).strftime("%m-%d %H:%M:%S") if moment else "—"
 
@@ -259,8 +270,14 @@ def duration(minutes: float | None) -> str:
     return f"{minutes / 1440:.1f} 天"
 
 
-def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float,
-                block_gap: float, show_dupes: bool) -> str:
+def report_text(
+    rows: list[dict],
+    ledger: Path,
+    site: str | None,
+    gap_min: float,
+    block_gap: float,
+    show_dupes: bool,
+) -> str:
     out: list[str] = []
     label = site or "全部站点"
     out.append(f"# 风控台账审计 · {label}")
@@ -270,43 +287,72 @@ def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float
         return "\n".join(out)
 
     rows, cooldown_blocked = split_site_requests(rows)
-    out.append(f"跨度: {fmt(rows[0]['_at'])} → {fmt(rows[-1]['_at'])}"
-               f"  （共 {(rows[-1]['_at'] - rows[0]['_at']).total_seconds() / 3600:.1f} 小时）")
+    out.append(
+        f"跨度: {fmt(rows[0]['_at'])} → {fmt(rows[-1]['_at'])}"
+        f"  （共 {(rows[-1]['_at'] - rows[0]['_at']).total_seconds() / 3600:.1f} 小时）"
+    )
     out.append(f"总请求数: {len(rows)}")
     if cooldown_blocked:
-        out.append(f"（另有 {cooldown_blocked} 次被熔断器拦下、**未发出请求**，已从以上统计中剔除 —— "
-                   f"它们若算进来会让'拦截率'看起来自己降下去）")
+        out.append(
+            f"（另有 {cooldown_blocked} 次被熔断器拦下、**未发出请求**，已从以上统计中剔除 —— "
+            f"它们若算进来会让'拦截率'看起来自己降下去）"
+        )
 
     # ① 总量：按命令
     out.append("\n## ① 总量（按命令）")
     by_command: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         by_command[row.get("command") or "?"].append(row)
-    out.append(pad("命令", 28) + pad("总次数", 8, ">") + pad("成功", 7, ">")
-               + pad("被拦", 7, ">") + pad("被拦率", 9, ">") + "  最后成功")
+    out.append(
+        pad("命令", 28)
+        + pad("总次数", 8, ">")
+        + pad("成功", 7, ">")
+        + pad("被拦", 7, ">")
+        + pad("被拦率", 9, ">")
+        + "  最后成功"
+    )
     for command, group in sorted(by_command.items(), key=lambda kv: -len(kv[1])):
         blocked = sum(1 for row in group if is_blocked(row))
         ok = sum(1 for row in group if row.get("ok"))
         last_ok = next((row["_at"] for row in reversed(group) if row.get("ok")), None)
         rate = f"{blocked / len(group) * 100:.0f}%" if group else "—"
-        out.append(pad(command, 28) + pad(str(len(group)), 8, ">") + pad(str(ok), 7, ">")
-                   + pad(str(blocked), 7, ">") + pad(rate, 9, ">") + "  " + fmt(last_ok))
+        out.append(
+            pad(command, 28)
+            + pad(str(len(group)), 8, ">")
+            + pad(str(ok), 7, ">")
+            + pad(str(blocked), 7, ">")
+            + pad(rate, 9, ">")
+            + "  "
+            + fmt(last_ok)
+        )
 
     # ② 总量：按天 + 会话
     out.append("\n## ② 总量（按天 / 按会话）")
     by_day: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         by_day[row["_at"].astimezone(TZ).strftime("%m-%d")].append(row)
-    out.append(pad("日期", 10) + pad("请求", 8, ">") + pad("被拦", 7, ">") + "  首次 → 末次")
+    out.append(
+        pad("日期", 10) + pad("请求", 8, ">") + pad("被拦", 7, ">") + "  首次 → 末次"
+    )
     for day, group in sorted(by_day.items()):
         blocked = sum(1 for row in group if is_blocked(row))
-        out.append(pad(day, 10) + pad(str(len(group)), 8, ">") + pad(str(blocked), 7, ">")
-                   + f"  {fmt(group[0]['_at'])[:11]} → {fmt(group[-1]['_at'])[:11]}")
+        out.append(
+            pad(day, 10)
+            + pad(str(len(group)), 8, ">")
+            + pad(str(blocked), 7, ">")
+            + f"  {fmt(group[0]['_at'])[:11]} → {fmt(group[-1]['_at'])[:11]}"
+        )
 
     starts = session_starts(rows, gap_min)
     out.append(f"\n会话（间隔 ≤ {gap_min:.0f} 分钟算同一场，共 {len(starts)} 场）:")
-    out.append(pad("开始", 17) + pad("时长", 9, ">") + pad("请求数", 8, ">")
-               + pad("均速/分", 9, ">") + pad("峰值/分", 9, ">") + "  被拦")
+    out.append(
+        pad("开始", 17)
+        + pad("时长", 9, ">")
+        + pad("请求数", 8, ">")
+        + pad("均速/分", 9, ">")
+        + pad("峰值/分", 9, ">")
+        + "  被拦"
+    )
     for position, start in enumerate(starts):
         end = starts[position + 1] if position + 1 < len(starts) else len(rows)
         group = rows[start:end]
@@ -314,9 +360,14 @@ def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float
         blocked = sum(1 for row in group if is_blocked(row))
         # 峰值用 1 分钟滑动窗口，和"分钟内频次"同一口径
         peak = peak_in_window(group, 1.0)["count"]
-        out.append(pad(fmt(group[0]["_at"])[:14], 17) + pad(duration(span), 9, ">")
-                   + pad(str(len(group)), 8, ">") + pad(f"{len(group) / span:.1f}", 9, ">")
-                   + pad(str(peak), 9, ">") + f"  {blocked}")
+        out.append(
+            pad(fmt(group[0]["_at"])[:14], 17)
+            + pad(duration(span), 9, ">")
+            + pad(str(len(group)), 8, ">")
+            + pad(f"{len(group) / span:.1f}", 9, ">")
+            + pad(str(peak), 9, ">")
+            + f"  {blocked}"
+        )
         if len(starts) > 40 and position >= 39:
             out.append(f"  … 其余 {len(starts) - 40} 场略（用 --json 取全量）")
             break
@@ -325,12 +376,21 @@ def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float
     out.append("\n## ③ 分钟内频次（滑动窗口；这是唯一正确的口径）")
     out.append("⚠️ 不要用「按日历分钟分桶」——那测的是某分钟的峰值，比窗口均速高得多，")
     out.append("   2026-10-14 我正是拿它得出了错误结论。")
-    out.append(pad("窗口", 12) + pad("峰值请求数", 12, ">") + pad("折算/分", 10, ">")
-               + "  峰值出现于")
+    out.append(
+        pad("窗口", 12)
+        + pad("峰值请求数", 12, ">")
+        + pad("折算/分", 10, ">")
+        + "  峰值出现于"
+    )
     for minutes in (1, 5, 15, 60):
         peak = peak_in_window(rows, minutes)
-        out.append(pad(f"{minutes} 分钟", 12) + pad(str(peak["count"]), 12, ">")
-                   + pad(f"{peak['rate_per_min']:.2f}", 10, ">") + "  " + fmt(peak["at"]))
+        out.append(
+            pad(f"{minutes} 分钟", 12)
+            + pad(str(peak["count"]), 12, ">")
+            + pad(f"{peak['rate_per_min']:.2f}", 10, ">")
+            + "  "
+            + fmt(peak["at"])
+        )
 
     # ④ 封禁段
     segments = block_segments(rows, block_gap)
@@ -338,54 +398,90 @@ def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float
     if not segments:
         out.append("（无）")
     else:
-        out.append(pad("#", 4) + pad("开始", 17) + pad("末次", 17) + pad("持续", 9, ">")
-                   + pad("被拦次数", 9, ">") + "  错误码")
+        out.append(
+            pad("#", 4)
+            + pad("开始", 17)
+            + pad("末次", 17)
+            + pad("持续", 9, ">")
+            + pad("被拦次数", 9, ">")
+            + "  错误码"
+        )
         for number, segment in enumerate(segments, 1):
-            codes = ", ".join(f"{code}×{n}" for code, n in segment["codes"].most_common())
-            out.append(pad(str(number), 4) + pad(fmt(segment["start"])[:14], 17)
-                       + pad(fmt(segment["last"])[:14], 17)
-                       + pad(duration(segment["span_min"]), 9, ">")
-                       + pad(str(segment["count"]), 9, ">") + f"  {codes}")
+            codes = ", ".join(
+                f"{code}×{n}" for code, n in segment["codes"].most_common()
+            )
+            out.append(
+                pad(str(number), 4)
+                + pad(fmt(segment["start"])[:14], 17)
+                + pad(fmt(segment["last"])[:14], 17)
+                + pad(duration(segment["span_min"]), 9, ">")
+                + pad(str(segment["count"]), 9, ">")
+                + f"  {codes}"
+            )
 
     # ⑤ 触发前的负荷 —— 找阈值的关键
     out.append("\n## ⑤ 每次封禁「触发前」的负荷")
-    out.append("对照着看：能站住的说法是「连续多久 / 累计多少次之后触发」，而不是某个瞬时速率。")
-    out.append(pad("#", 4) + pad("触发时刻", 17) + pad("前1分", 7, ">") + pad("前5分", 7, ">")
-               + pad("前15分", 8, ">") + pad("前60分", 8, ">")
-               + pad("本会话至此", 11, ">") + pad("连续被拦", 9, ">"))
+    out.append(
+        "对照着看：能站住的说法是「连续多久 / 累计多少次之后触发」，而不是某个瞬时速率。"
+    )
+    out.append(
+        pad("#", 4)
+        + pad("触发时刻", 17)
+        + pad("前1分", 7, ">")
+        + pad("前5分", 7, ">")
+        + pad("前15分", 8, ">")
+        + pad("前60分", 8, ">")
+        + pad("本会话至此", 11, ">")
+        + pad("连续被拦", 9, ">")
+    )
     for number, segment in enumerate(segments, 1):
         onset = segment["start"]
         index = segment["indices"][0]
         # 本会话（最近一次大间隔之后的全部请求）
         session_start = 0
         for position in range(index, -1, -1):
-            if position == 0 or (rows[position]["_at"] - rows[position - 1]["_at"]) > timedelta(minutes=gap_min):
+            if position == 0 or (
+                rows[position]["_at"] - rows[position - 1]["_at"]
+            ) > timedelta(minutes=gap_min):
                 session_start = position
                 break
-        out.append(pad(str(number), 4) + pad(fmt(onset)[:14], 17)
-                   + pad(str(load_before(rows, onset, 1)), 7, ">")
-                   + pad(str(load_before(rows, onset, 5)), 7, ">")
-                   + pad(str(load_before(rows, onset, 15)), 8, ">")
-                   + pad(str(load_before(rows, onset, 60)), 8, ">")
-                   + pad(str(index - session_start), 11, ">")
-                   + pad(str(runs_since_last_success(rows, index)), 9, ">"))
+        out.append(
+            pad(str(number), 4)
+            + pad(fmt(onset)[:14], 17)
+            + pad(str(load_before(rows, onset, 1)), 7, ">")
+            + pad(str(load_before(rows, onset, 5)), 7, ">")
+            + pad(str(load_before(rows, onset, 15)), 8, ">")
+            + pad(str(load_before(rows, onset, 60)), 8, ">")
+            + pad(str(index - session_start), 11, ">")
+            + pad(str(runs_since_last_success(rows, index)), 9, ">")
+        )
 
     # ⑥ 恢复
     gaps = [item for item in recovery_gaps(rows) if item["cooldown_min"] is not None]
     out.append("\n## ⑥ 封禁后的恢复")
     if not gaps:
-        out.append("（台账内尚无「封禁后又成功」的记录 —— 说明封禁至今未解，或还没等到恢复）")
+        out.append(
+            "（台账内尚无「封禁后又成功」的记录 —— 说明封禁至今未解，或还没等到恢复）"
+        )
     else:
-        out.append(pad("封禁开始", 17) + pad("封禁持续", 10, ">") + pad("首次成功", 17)
-                   + pad("末次拦截→恢复", 14, ">"))
+        out.append(
+            pad("封禁开始", 17)
+            + pad("封禁持续", 10, ">")
+            + pad("首次成功", 17)
+            + pad("末次拦截→恢复", 14, ">")
+        )
         for item in gaps:
-            out.append(pad(fmt(item["block_start"])[:14], 17)
-                       + pad(duration(item["span_min"]), 10, ">")
-                       + pad(fmt(item["first_ok_after"])[:14], 17)
-                       + pad(duration(item["cooldown_min"]), 14, ">"))
+            out.append(
+                pad(fmt(item["block_start"])[:14], 17)
+                + pad(duration(item["span_min"]), 10, ">")
+                + pad(fmt(item["first_ok_after"])[:14], 17)
+                + pad(duration(item["cooldown_min"]), 14, ">")
+            )
         cool = [item["cooldown_min"] for item in gaps]
-        out.append(f"\n恢复耗时: 最短 {duration(min(cool))} / 最长 {duration(max(cool))} / "
-                   f"中位 {duration(sorted(cool)[len(cool) // 2])}")
+        out.append(
+            f"\n恢复耗时: 最短 {duration(min(cool))} / 最长 {duration(max(cool))} / "
+            f"中位 {duration(sorted(cool)[len(cool) // 2])}"
+        )
 
     # ⑦ 安全边界估计 —— 这才是能用来调参的那个数
     out.append("\n## ⑦ 安全边界估计（能用来调参的只有这里的数）")
@@ -402,44 +498,61 @@ def report_text(rows: list[dict], ledger: Path, site: str | None, gap_min: float
 
     if hit:
         sizes = sorted(len(group) for group, _ in hit)
-        out.append(f"- **踩雷的长会话（≥10 次）：{len(hit)} 场**，累计请求 "
-                   f"{sizes[0]}–{sizes[-1]} 次/场（中位 {sizes[len(sizes) // 2]}）")
+        out.append(
+            f"- **踩雷的长会话（≥10 次）：{len(hit)} 场**，累计请求 "
+            f"{sizes[0]}–{sizes[-1]} 次/场（中位 {sizes[len(sizes) // 2]}）"
+        )
     else:
         out.append("- 尚无 ≥10 次且踩雷的长会话")
     if clean:
         sizes = sorted(len(group) for group, _ in clean)
-        out.append(f"- **干净的长会话：{len(clean)} 场**，累计请求 "
-                   f"{sizes[0]}–{sizes[-1]} 次/场")
+        out.append(
+            f"- **干净的长会话：{len(clean)} 场**，累计请求 "
+            f"{sizes[0]}–{sizes[-1]} 次/场"
+        )
     else:
-        out.append("- ❌ **干净的长会话：0 场** —— 也就是说，"
-                   "我们**从来没有跑完过一场不被封的长会话**，"
-                   "所以「单场累计多少次是安全的」这个数**目前根本不存在**，"
-                   "任何写出来的数字都是编的。")
+        out.append(
+            "- ❌ **干净的长会话：0 场** —— 也就是说，"
+            "我们**从来没有跑完过一场不被封的长会话**，"
+            "所以「单场累计多少次是安全的」这个数**目前根本不存在**，"
+            "任何写出来的数字都是编的。"
+        )
     if hit and not clean:
         lowest = min(len(group) for group, _ in hit)
-        out.append(f"- 可下的最强结论：**安全上界低于 {lowest} 次/场**（已知最少的踩雷场就是 "
-                   f"{lowest} 次）。要把它变成确切的数，只能主动做一次受控实验："
-                   f"固定间隔、单场 {lowest // 2} 次、跑完不封再翻倍。")
-        out.append("- ⚠️ 别再用「空闲后单发一枪探一下」的办法猜 —— 那既测不出边界，"
-                   "又会给已建立的封禁续命（见 ⑤ 中前 60 分负荷为 0 的那几段）。")
+        out.append(
+            f"- 可下的最强结论：**安全上界低于 {lowest} 次/场**（已知最少的踩雷场就是 "
+            f"{lowest} 次）。要把它变成确切的数，只能主动做一次受控实验："
+            f"固定间隔、单场 {lowest // 2} 次、跑完不封再翻倍。"
+        )
+        out.append(
+            "- ⚠️ 别再用「空闲后单发一枪探一下」的办法猜 —— 那既测不出边界，"
+            "又会给已建立的封禁续命（见 ⑤ 中前 60 分负荷为 0 的那几段）。"
+        )
 
     if show_dupes:
         out.append("\n## ⑧ 双跑哨兵")
         pairs = check_dupes(rows)
         if not pairs:
-            out.append("同身份 <3 秒成对出现: 0 对  ✅ 正常（一次逻辑调用 = 一次站点请求）")
+            out.append(
+                "同身份 <3 秒成对出现: 0 对  ✅ 正常（一次逻辑调用 = 一次站点请求）"
+            )
         else:
-            out.append(f"同身份 <3 秒成对出现: {len(pairs)} 对  ❌ **双跑回归** —— "
-                       f"实际请求密度翻倍，此时任何限速结论都不可信！")
+            out.append(
+                f"同身份 <3 秒成对出现: {len(pairs)} 对  ❌ **双跑回归** —— "
+                f"实际请求密度翻倍，此时任何限速结论都不可信！"
+            )
             for previous, current in pairs[:10]:
-                out.append(f"  {fmt(current['_at'])}  {call_identity(current)}  "
-                           f"相隔 {(current['_at'] - previous['_at']).total_seconds():.2f}s  "
-                           f"pid {previous.get('pid')} → {current.get('pid')}")
+                out.append(
+                    f"  {fmt(current['_at'])}  {call_identity(current)}  "
+                    f"相隔 {(current['_at'] - previous['_at']).total_seconds():.2f}s  "
+                    f"pid {previous.get('pid')} → {current.get('pid')}"
+                )
     return "\n".join(out)
 
 
-def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float,
-                block_gap: float) -> str:
+def report_html(
+    rows: list[dict], ledger: Path, site: str | None, gap_min: float, block_gap: float
+) -> str:
     """自包含单文件 HTML —— 手机上直接看，不依赖任何外部资源。"""
     label = site or "全部站点"
     if not rows:
@@ -471,15 +584,19 @@ def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float
         bar_h = value / peak * inner_h
         x = pad + index * step
         colour = "#c0392b" if blocks[index] else "#2e86de"
-        bars.append(f'<rect x="{x:.2f}" y="{pad + inner_h - bar_h:.2f}" '
-                    f'width="{max(step - 0.6, 0.6):.2f}" height="{bar_h:.2f}" fill="{colour}" '
-                    f'opacity="{0.5 if blocks[index] else 0.9}"><title>'
-                    f'{fmt(first + timedelta(seconds=index * bucket_s))} · {value} 次'
-                    f'{"（含被拦 %d）" % blocks[index] if blocks[index] else ""}</title></rect>')
+        bars.append(
+            f'<rect x="{x:.2f}" y="{pad + inner_h - bar_h:.2f}" '
+            f'width="{max(step - 0.6, 0.6):.2f}" height="{bar_h:.2f}" fill="{colour}" '
+            f'opacity="{0.5 if blocks[index] else 0.9}"><title>'
+            f"{fmt(first + timedelta(seconds=index * bucket_s))} · {value} 次"
+            f"{'（含被拦 %d）' % blocks[index] if blocks[index] else ''}</title></rect>"
+        )
     for segment in segments:
         x = pad + (segment["start"] - first).total_seconds() / total_seconds * inner_w
-        marks.append(f'<line x1="{x:.2f}" y1="{pad}" x2="{x:.2f}" y2="{pad + inner_h}" '
-                     f'stroke="#c0392b" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.8"/>')
+        marks.append(
+            f'<line x1="{x:.2f}" y1="{pad}" x2="{x:.2f}" y2="{pad + inner_h}" '
+            f'stroke="#c0392b" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.8"/>'
+        )
 
     table_rows = []
     for number, segment in enumerate(segments, 1):
@@ -489,12 +606,14 @@ def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float
             f"<tr><td>{number}</td><td>{fmt(onset)}</td><td>{duration(segment['span_min'])}</td>"
             f"<td>{segment['count']}</td><td>{load_before(rows, onset, 1)}</td>"
             f"<td>{load_before(rows, onset, 5)}</td><td>{load_before(rows, onset, 15)}</td>"
-            f"<td>{load_before(rows, onset, 60)}</td><td>{codes}</td></tr>")
+            f"<td>{load_before(rows, onset, 60)}</td><td>{codes}</td></tr>"
+        )
 
     cooldown_card = (
         f'<div class="metric"><div class="value">{cooldown_blocked}</div>'
         f'<div class="label">熔断拦下</div><div class="sub">未发出请求，已剔除</div></div>'
-        if cooldown_blocked else ""
+        if cooldown_blocked
+        else ""
     )
     peaks = "".join(
         f"<div class='metric'><div class='value'>{peak_in_window(rows, m)['count']}</div>"
@@ -517,13 +636,17 @@ def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float
     if not hit:
         boundary = "尚无 ≥10 次的长会话，无法判断边界。"
     elif clean:
-        boundary = (f"踩雷的长会话 {len(hit)} 场（累计 {hit[0]}–{hit[-1]} 次）；"
-                    f"干净的长会话 {len(clean)} 场（累计 {clean[0]}–{clean[-1]} 次）。")
+        boundary = (
+            f"踩雷的长会话 {len(hit)} 场（累计 {hit[0]}–{hit[-1]} 次）；"
+            f"干净的长会话 {len(clean)} 场（累计 {clean[0]}–{clean[-1]} 次）。"
+        )
     else:
-        boundary = (f"踩雷的长会话 {len(hit)} 场（累计 {hit[0]}–{hit[-1]} 次）；"
-                    f"<b>干净的长会话 0 场</b> —— 从未跑完过一场不被封的长会话，"
-                    f"所以「单场累计多少次安全」这个数目前根本不存在。"
-                    f"可下的最强结论是：安全上界低于 <b>{hit[0]} 次/场</b>。")
+        boundary = (
+            f"踩雷的长会话 {len(hit)} 场（累计 {hit[0]}–{hit[-1]} 次）；"
+            f"<b>干净的长会话 0 场</b> —— 从未跑完过一场不被封的长会话，"
+            f"所以「单场累计多少次安全」这个数目前根本不存在。"
+            f"可下的最强结论是：安全上界低于 <b>{hit[0]} 次/场</b>。"
+        )
 
     return f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -561,7 +684,7 @@ def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float
 
 <h2>请求时间轴（5 分钟分桶）</h2>
 <div class="chart"><svg viewBox="0 0 {width} {height}" width="{width}" height="{height}"
- style="min-width:{width}px">{''.join(bars)}{''.join(marks)}</svg></div>
+ style="min-width:{width}px">{"".join(bars)}{"".join(marks)}</svg></div>
 <div class="legend"><span class="dot" style="background:#2e86de"></span>正常
 <span class="dot" style="background:#c0392b"></span>被拦<span class="dot" style="background:#c0392b;opacity:.5"></span>含被拦的桶
 <span style="margin-left:12px">红色虚线 = 封禁段起点</span></div>
@@ -579,23 +702,30 @@ def report_html(rows: list[dict], ledger: Path, site: str | None, gap_min: float
 <div class="scroll"><table>
 <tr><th>#</th><th>触发时刻</th><th>持续</th><th>被拦次数</th><th>前 1 分</th><th>前 5 分</th>
 <th>前 15 分</th><th>前 60 分</th><th>错误码</th></tr>
-{''.join(table_rows) if table_rows else '<tr><td colspan="9">无封禁记录</td></tr>'}
+{"".join(table_rows) if table_rows else '<tr><td colspan="9">无封禁记录</td></tr>'}
 </table></div>
 </body></html>"""
 
 
 # --------------------------------------------------------------------------- CLI
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="opencli 风控台账审计")
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     parser.add_argument("--site", default=None, help="只统计该站点（如 xiaohongshu）")
-    parser.add_argument("--gap", type=float, default=30.0, help="会话切分间隔（分钟），默认 30")
-    parser.add_argument("--block-gap", type=float, default=60.0, help="封禁段切分间隔（分钟），默认 60")
+    parser.add_argument(
+        "--gap", type=float, default=30.0, help="会话切分间隔（分钟），默认 30"
+    )
+    parser.add_argument(
+        "--block-gap", type=float, default=60.0, help="封禁段切分间隔（分钟），默认 60"
+    )
     parser.add_argument("--check-dupes", action="store_true", help="额外跑双跑哨兵")
     parser.add_argument("--json", action="store_true", help="输出 JSON 而不是报表")
     parser.add_argument("--html", type=Path, default=None, help="另存自包含 HTML 报表")
-    parser.add_argument("--quiet", action="store_true", help="配 --html 用时只打印一行摘要")
+    parser.add_argument(
+        "--quiet", action="store_true", help="配 --html 用时只打印一行摘要"
+    )
     options = parser.parse_args()
 
     if not options.ledger.exists():
@@ -622,31 +752,60 @@ def main() -> int:
             "total": len(rows),
             "cooldown_blocked": cooldown_blocked,
             "blocked": sum(1 for r in rows if is_blocked(r)),
-            "range": [rows[0]["_at"].isoformat(), rows[-1]["_at"].isoformat()] if rows else None,
+            "range": [rows[0]["_at"].isoformat(), rows[-1]["_at"].isoformat()]
+            if rows
+            else None,
             "peaks": peaks,
             "block_segments": [
-                {"start": s["start"].isoformat(), "last": s["last"].isoformat(),
-                 "count": s["count"], "span_min": round(s["span_min"], 1),
-                 "codes": dict(s["codes"]),
-                 "load_before": {f"{m}m": load_before(rows, s["start"], m) for m in (1, 5, 15, 60)}}
+                {
+                    "start": s["start"].isoformat(),
+                    "last": s["last"].isoformat(),
+                    "count": s["count"],
+                    "span_min": round(s["span_min"], 1),
+                    "codes": dict(s["codes"]),
+                    "load_before": {
+                        f"{m}m": load_before(rows, s["start"], m)
+                        for m in (1, 5, 15, 60)
+                    },
+                }
                 for s in block_segments(rows, options.block_gap)
             ],
             "dupes": (
-                [{"identity": call_identity(current), "at": current["_at"].isoformat(),
-                  "gap_s": round((current["_at"] - previous["_at"]).total_seconds(), 2)}
-                 for previous, current in check_dupes(rows)]
-                if options.check_dupes else None
+                [
+                    {
+                        "identity": call_identity(current),
+                        "at": current["_at"].isoformat(),
+                        "gap_s": round(
+                            (current["_at"] - previous["_at"]).total_seconds(), 2
+                        ),
+                    }
+                    for previous, current in check_dupes(rows)
+                ]
+                if options.check_dupes
+                else None
             ),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     elif not options.quiet:
-        print(report_text(rows, options.ledger, options.site, options.gap,
-                          options.block_gap, options.check_dupes))
+        print(
+            report_text(
+                rows,
+                options.ledger,
+                options.site,
+                options.gap,
+                options.block_gap,
+                options.check_dupes,
+            )
+        )
 
     if options.html:
         options.html.parent.mkdir(parents=True, exist_ok=True)
-        options.html.write_text(report_html(rows, options.ledger, options.site,
-                                            options.gap, options.block_gap), encoding="utf-8")
+        options.html.write_text(
+            report_html(
+                rows, options.ledger, options.site, options.gap, options.block_gap
+            ),
+            encoding="utf-8",
+        )
         print(f"HTML 报表: {options.html}")
     return 0
 
