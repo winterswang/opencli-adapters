@@ -46,6 +46,15 @@ import { resolveDomainKey } from './lib/domains.js';
 import { applyEnv, policyForCall, shouldThrottle } from './lib/policy.js';
 import { acquireInflight, releaseInflight } from './lib/concurrency.js';
 import { acquireSlot } from './lib/ratelimit.js';
+import {
+  RISK_CODES,
+  blockWithBogusProfile,
+  cooldownPathFor,
+  cooldownRemainingMs,
+  peekCooldown,
+  restoreProfile,
+  tripCooldown,
+} from './lib/cooldown.js';
 import { appendRecord, callerInfo, pickTarget, stripInternalArgs, truncate } from './lib/requestlog.js';
 
 /** 谁、何时、打哪条命令 —— 与调用方身份（靠继承来的环境变量认，不需要调用方配合）。 */
@@ -118,7 +127,30 @@ function guardFields(guard) {
     // overflowed 专指「排队超预算」；拿不到闸门锁是另一回事，单列字段别混。
     overflowed: conc.overflowed ?? null,
     gate_fail_open: conc.gate_fail_open ?? null,
+    // 熔断（见 lib/cooldown.js）。`cooldown_active` = 本次被熔断器挡下，
+    // **一个站点请求都没发出去**，对应的错误码是 BROWSER_CONNECT 而不是风控码 ——
+    // 统计拦截率时要把这种行排除，否则熔断器一生效就把自己的成绩算成"风控变好了"。
+    cooldown_active: guard.cooldownActive ?? false,
+    cooldown_remaining_ms: guard.cooldownRemainingMs ?? null,
+    cooldown_tripped_until_ms: guard.cooldownTripped?.until_ms ?? null,
+    cooldown_level: guard.cooldownTripped?.level ?? null,
   };
+}
+
+/**
+ * 命中风控 → 记一次熔断。
+ *
+ * 必须在 `buildRecord(ctx)` **之前**调用，这样本次的台账行就带上了
+ * `cooldown_tripped_until_ms`，事后能从台账直接看出"是这一枪触发的"。
+ * 被熔断器自己挡下的调用（`cooldownActive`）不算新命中 —— 否则冷开会自我续命，
+ * 越拦越长，永远出不来。
+ */
+function recordRiskTrip(ctx, guard) {
+  if (guard.cooldownActive) return;
+  const code = ctx?.error?.code;
+  if (!RISK_CODES.has(code)) return;
+  const state = tripCooldown(guard.key, code, guard.policy ?? {});
+  if (state) guard.cooldownTripped = state;
 }
 
 /** 结局。err.code 是 opencli 的 CliError 码（如 BLOCKED_WAF），比字符串匹配可靠。 */
@@ -172,6 +204,33 @@ export function installRateLimit() {
       ctx.__xqGuard.throttled = false;
       return;
     }
+    ctx.__xqGuard.policy = policy;
+
+    // 熔断优先于限速：冷却期内**不排队、不等待、不发请求**，直接在 routing 阶段硬失败。
+    // 不是用抛异常 —— 钩子抛异常会被 hooks.js 的 try/catch 吞掉、命令照跑
+    // （见 lib/cooldown.js 文件头）。也不是"睡到冷却结束再放行"：冷却动辄几小时，
+    // 睡过去等于把调用方挂死，而**失败才是它真正想要的答案**。
+    const remainingMs = cooldownRemainingMs(key, policy);
+    if (remainingMs > 0) {
+      ctx.__xqGuard.cooldownActive = true;
+      ctx.__xqGuard.cooldownRemainingMs = remainingMs;
+      ctx.__xqGuard.throttled = false;
+      ctx.__xqGuard.skipReason = 'cooldown_active';
+      blockWithBogusProfile(ctx.__xqGuard);
+      // ⚠️ 这里**刻意不往 stderr 写横幅**（此前有一句 `cooldown[…]: 该站点正在风控冷却中…`）。
+      // 两个原因，都不是洁癖：
+      //   ① stderr 另有消费者 —— 调用方把子进程 stderr 全文交给
+      //      `xueqiu_analyzer.waf.classify_failure`，而它的关键词表里有**裸「风控」**
+      //      （子串匹配）。于是「本地拦下、一个请求都没发」会被判成「风控验证页」，
+      //      写进 monitor 日报的「数据完整性」表 —— 恰好是这套熔断器通篇在防的那种误读。
+      //   ② 插件自己的硬约束就是钩子内不写 stdout/stderr（见 lib/requestlog.js 文件头）。
+      // 可观测性没有丢：这次拦截已经记进台账（`cooldown_active` / `skip_reason:
+      // cooldown_active` / `cooldown_remaining_ms`），而 opencli 抛出的错误文本里也带着
+      // `Browser profile "__opencli_risk_cooldown__" is not connected` —— 人一眼能看出
+      // 是「刻意拦下」而不是「浏览器挂了」。
+      return;
+    }
+
     ctx.__xqGuard.throttled = true;
     try {
       // 顺序刻意如此：限速的 sleep 不该占着并发名额（否则 max=1 时睡的人占着槽，
@@ -198,6 +257,9 @@ export function installRateLimit() {
     if (!guard) return;
     // 先释放并发槽再写台账：日志写失败也必须把名额还回去。
     releaseInflight(guard.key, guard.concurrency?.token ?? null);
+    // 还原被熔断器改掉的 OPENCLI_PROFILE —— 守护进程模式下不还原会污染后续命令。
+    restoreProfile(guard);
+    recordRiskTrip(ctx, guard);
     appendRecord(buildRecord(ctx));
   });
 }
@@ -205,4 +267,5 @@ export function installRateLimit() {
 installRateLimit();
 
 export { acquireSlot, applyEnv, policyForCall, resolveDomainKey, buildRecord };
+export { RISK_CODES, cooldownRemainingMs, peekCooldown, tripCooldown };
 export { log };
