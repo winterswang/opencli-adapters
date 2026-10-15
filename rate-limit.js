@@ -51,7 +51,6 @@ import {
   blockWithBogusProfile,
   cooldownPathFor,
   cooldownRemainingMs,
-  humanizeMs,
   peekCooldown,
   restoreProfile,
   tripCooldown,
@@ -218,11 +217,17 @@ export function installRateLimit() {
       ctx.__xqGuard.throttled = false;
       ctx.__xqGuard.skipReason = 'cooldown_active';
       blockWithBogusProfile(ctx.__xqGuard);
-      log.warn(
-        `cooldown[${key}]: 该站点正在风控冷却中，还剩 ${humanizeMs(remainingMs)}。`
-          + `已阻止 ${full} 发出请求（不是"卡住"，是刻意不发）。`
-          + `状态文件：${cooldownPathFor(key, policy)}`,
-      );
+      // ⚠️ 这里**刻意不往 stderr 写横幅**（此前有一句 `cooldown[…]: 该站点正在风控冷却中…`）。
+      // 两个原因，都不是洁癖：
+      //   ① stderr 另有消费者 —— 调用方把子进程 stderr 全文交给
+      //      `xueqiu_analyzer.waf.classify_failure`，而它的关键词表里有**裸「风控」**
+      //      （子串匹配）。于是「本地拦下、一个请求都没发」会被判成「风控验证页」，
+      //      写进 monitor 日报的「数据完整性」表 —— 恰好是这套熔断器通篇在防的那种误读。
+      //   ② 插件自己的硬约束就是钩子内不写 stdout/stderr（见 lib/requestlog.js 文件头）。
+      // 可观测性没有丢：这次拦截已经记进台账（`cooldown_active` / `skip_reason:
+      // cooldown_active` / `cooldown_remaining_ms`），而 opencli 抛出的错误文本里也带着
+      // `Browser profile "__opencli_risk_cooldown__" is not connected` —— 人一眼能看出
+      // 是「刻意拦下」而不是「浏览器挂了」。
       return;
     }
 
