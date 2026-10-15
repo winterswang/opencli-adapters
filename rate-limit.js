@@ -192,19 +192,32 @@ export function installRateLimit() {
     ctx.__xqGuard = { startedAt: Date.now(), site, name, args: ctx?.args, key, host, via, target: '' };
 
     const base = policyForCall(key, site);
+    const policy = base ? applyEnv(key, base, site) : null;
+    // ⚠️ `policy` 必须在**任何 return 之前**挂上去。它有两个消费者：
+    //   ① 下面的 `cooldownRemainingMs(key, policy)`；
+    //   ② `onAfterExecute` 里 `tripCooldown(key, code, guard.policy ?? {})`。
+    // 此前它写在两个 early-return **之后**，于是那两条路径上的 trip 会退化成 `{}`
+    // 默认策略（enabled: true、base 1h）——后果是：站点被显式禁用（enabled:false）
+    // 时熔断器**照样 trip 并逐级升级**（重新打开限速的那一刻立刻吃到一个长冷却），
+    // 而 `--help` 这类被跳过的命令上的 trip 也按默认值记账而不是实际策略。
+    ctx.__xqGuard.policy = policy;
+
     if (!base) {
+      // 未声明键：没有限速策略，但熔断仍适用（`~/.opencli/rate-limits.json` 的注记：
+      // 「所有站点默认开启，未声明 cooldown 的站点也走这套默认值」）。
+      // 这里仍按原样返回 —— 但 `policy` 已挂上（见上），所以 trip 的记账口径正确。
+      // 已知遗留：这条路径写在 cooldown 检查**之前**，所以未声明键写的冷却文件
+      // 当下不会被读取（记账正确、但不生效）。影响有限：未声明键本就不限速。
       ctx.__xqGuard.skipReason = 'no_policy';
       ctx.__xqGuard.throttled = false;
       return;
     }
-    const policy = applyEnv(key, base, site);
     if (!shouldThrottle(name, ctx?.args, policy)) {
       ctx.__xqGuard.skipReason =
         policy.enabled === false ? 'disabled' : ctx?.args?.help || ctx?.args?.h ? 'help' : 'skip_command';
       ctx.__xqGuard.throttled = false;
       return;
     }
-    ctx.__xqGuard.policy = policy;
 
     // 熔断优先于限速：冷却期内**不排队、不等待、不发请求**，直接在 routing 阶段硬失败。
     // 不是用抛异常 —— 钩子抛异常会被 hooks.js 的 try/catch 吞掉、命令照跑
