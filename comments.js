@@ -1,5 +1,5 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
-import { ArgumentError, AuthRequiredError, CliError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
+import { ArgumentError, AuthRequiredError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
 import { log } from '@jackwener/opencli/logger';
 import { isRecord } from '@jackwener/opencli/utils';
 const XUEQIU_SYMBOL_PATTERN = /^(?:[A-Z]{2}\d{5,6}|\d{4,6}|[A-Z]{1,5}(?:[.-][A-Z]{1,2})?)$/;
@@ -41,23 +41,21 @@ function buildPaginationStopMessage(requestNumber, collected, target, reason) {
         + `reason: ${reason}`;
 }
 function throwFirstPageFailure(kind, symbol) {
-    if (kind === 'anti-bot') {
-        // 挑战页（滑动验证 / 访问频繁）**不是**「没登录」，两者必须分开：
-        // 登录态失效该提示重新登录，而挑战页是**站点风控** —— 要开熔断退避、
-        // 不能靠重试硬撞。用专属码的理由与 `article.js` 的 `BLOCKED_WAF` 完全相同
-        // （那边的注释写得更细）。
-        //
-        // ⚠️ 这条分支在 2026-10-15 之前抛的是 `AuthRequiredError`（AUTH_REQUIRED），
-        // 而它不在 `lib/cooldown.js` 的 RISK_CODES 里 —— 于是 comments 撞上挑战页时
-        // **熔断器永远不会武装**，几十个子代理继续打同一个已经摊在地上的站点。
-        // （同类问题在 news / user-articles / replies 上仍是 `COMMAND_EXEC`，未改。）
-        throw new CliError(
-            'BLOCKED_WAF',
-            '风控验证页（滑动验证 / 访问频繁）—— 这不是"没有数据"，也不是"没登录"',
-            '请在已连上 opencli 的 Chrome 里打开雪球完成滑块验证，然后重跑',
-        );
-    }
-    if (kind === 'auth') {
+    if (kind === 'auth' || kind === 'anti-bot') {
+        // ⚠️ 2026-10-15：曾把 `anti-bot` 单独拆出来抛 `CliError('BLOCKED_WAF')`，好让
+        // comments 撞挑战页时武装熔断器 —— **已撤掉**，理由是「武装的入口必须配得上
+        // 这个开关」：
+        //   · 这里用的 `isAntiBotHtml()` 是 comments.js **自写**的正则，它**不在**
+        //     `scripts/sync_waf_patterns.py` 的 ADAPTER_FILES 里，因此不受
+        //     `test_waf_patterns_sync.py` 的同源漂移保护；权威表（xueqiu_analyzer.waf
+        //     的 CONTENT_PATTERNS，也就是 news/replies/user-articles/article 用的那份）
+        //     里的中文挑战文案它一条都没有，却多出 `risk`（子串级，`brisk` 也算）与
+        //     `renderData`（雪球自有 SSR 变量名，正常页面就可能出现）两个过宽的 token。
+        //   · 而 xueqiu 的冷却键是**域级**的（`<key>-cooldown.json`）：一次误判 = 整个
+        //     xueqiu 域停摆 1h 起，且同批的 stock-notices 也会被挡住，把调用方推向
+        //     插件管辖之外、不限速的 Playwright 回退路径。
+        // 结论：要让列表类命令武装熔断，先把这个检测器并入同源同步（用一个由
+        // CONTENT_PATTERNS 生成的第二常量）并删掉那两个过宽 token，再改这一行。
         throw new AuthRequiredError('xueqiu.com', 'Stock discussions require login or challenge clearance');
     }
     if (kind === 'argument') {

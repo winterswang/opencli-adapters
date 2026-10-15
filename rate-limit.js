@@ -200,7 +200,7 @@ export function installRateLimit() {
     // 默认策略（enabled: true、base 1h）——后果是：站点被显式禁用（enabled:false）
     // 时熔断器**照样 trip 并逐级升级**（重新打开限速的那一刻立刻吃到一个长冷却），
     // 而 `--help` 这类被跳过的命令上的 trip 也按默认值记账而不是实际策略。
-    ctx.__xqGuard.policy = policy ?? undefined;
+    ctx.__xqGuard.policy = policy;
 
     if (!base) {
       // 未声明键：没有限速策略，但熔断仍适用（`~/.opencli/rate-limits.json` 的注记：

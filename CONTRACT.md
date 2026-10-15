@@ -107,7 +107,7 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 
 | 类 | `code` | 退出码 | 消费者该怎么处理 |
 |---|---|---|---|
-| `CliError(code, …)` | 自定义：**`BLOCKED_WAF`**（雪球 `web article` / `comments` 命中风控页）、**`SECURITY_BLOCK`**（小红书 `search` 命中「安全限制 / 账号异常」页） | 由插件指定 | **确定性信号，不要重试**（重试只会对着刚被拦的页面再打）；它也是 `lib/cooldown.js` 的熔断触发码之一 |
+| `CliError(code, …)` | 自定义：**`BLOCKED_WAF`**（雪球 `web article` 命中风控页）、**`SECURITY_BLOCK`**（小红书 `search` 命中「安全限制 / 账号异常」页） | 由插件指定 | **确定性信号，不要重试**（重试只会对着刚被拦的页面再打）；它也是 `lib/cooldown.js` 的熔断触发码之一 |
 | `BROWSER_CONNECT` | `BROWSER_CONNECT` | 69（SERVICE_UNAVAIL） | ⚠️ **可能是熔断器刻意拦下的**（它把 `OPENCLI_PROFILE` 指向不存在的 profile 让 routing 硬失败），**不是** daemon 挂了 —— 别重试、别当故障排查；先看 `~/.opencli/<域名键>-cooldown.json`。代价：这条路径约 45 秒才失败 |
 | `CommandExecutionError` | `COMMAND_EXEC` | GENERIC_ERROR | 可重试 |
 | `ArgumentError` | `ARGUMENT` | USAGE_ERROR | 别重试——参数错了，重试也一样 |
@@ -138,6 +138,19 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 | `~/.opencli/<域名键>-cooldown.json` | **风控熔断**状态 `{until_ms, level, reason, last_trip_ms, trips}`（`lib/cooldown.js`）：命中 `RISK_CODES` 后该站点在冷却期内发不出请求，指数退避 1h→2h→…→24h，距上次命中超 `decay_s` 则 level 归零 | 插件 |
 | `~/.opencli/adapter-calls.jsonl` | 插件台账（schema 2）。被熔断拦下的调用记 `cooldown_active` / `skip_reason: cooldown_active` —— **它没发出任何请求**，统计站请求量时要剔除 | 插件 |
 | `~/.opencli/rate-limits.json` | 用户策略覆盖（`sites` / `domains` / `defaults`；`cooldown` 可每键覆盖，未声明键走默认：开、1h 起、24h 封顶） | 用户 |
+
+⚠️ **冷却只对「有限速策略的键」真正生效**：`cooldownRemainingMs` 的检查点在该键的
+`policyForCall` 返回**之后**，所以**未声明**的键会写出一份
+`<域名键>-cooldown.json`（台账也记 `cooldown_tripped_until_ms`），但下一次调用照打
+不误 —— 那些站点本就不限速。`~/.opencli/rate-limits.json` 注记里的「所有站点默认开启」
+指**冷却的默认参数**，不是「所有站点都会被拦」。
+
+⚠️ **哪些命令会武装熔断**：只有抛出 `RISK_CODES`（`RATE_LIMITED` / `SECURITY_BLOCK` /
+`BLOCKED_WAF`）的命令。目前雪球侧**只有 `web article`**（`article.js` 抛 `BLOCKED_WAF`）；
+`news` / `replies` / `user-articles` 命中挑战页抛的是 `COMMAND_EXEC`、`comments` 抛的是
+`AUTH_REQUIRED`，**都不在 `RISK_CODES` 里**。这是**已知的不对称**：列表类命令撞上挑战页
+时熔断不会武装（`comments.js` 的检测器是自写正则、未并入同源同步，拿它去开域级开关的
+风险大于收益 —— 见该文件里的注释）。
 
 ## 6. 改动检查表
 
