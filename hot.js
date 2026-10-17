@@ -146,8 +146,16 @@ cli({
             );
         }
 
-        const tabbedRows = rows.filter((row) => !row.tab || row.tab === '热门');
-        const sourceRows = tabbedRows.length ? tabbedRows : rows;
+        // analytics-data 带 tab 标记时只认「热门」——点错 tab 绝不能把别的列表当热门返回。
+        // 老页面结构没有标记时才退回全量（并保底下一条错误路径区分「空结果」）。
+        const hotRows = rows.filter((row) => row.tab === '热门');
+        const sourceRows = hotRows.length ? hotRows : rows.filter((row) => !row.tab);
+        if (rows.length && !sourceRows.length) {
+            throw new CommandExecutionError(
+                '首页时间线有内容但没有「热门」标记——可能点到了别的 tab（页面结构变了）',
+                '在 Chrome 里打开 xueqiu.com 检查「热门」tab 的 DOM 结构，必要时更新 CLICK_HOT_TAB_JS',
+            );
+        }
         const nowMs = Date.now();
         const out = [];
         sourceRows.forEach((row, index) => {
