@@ -37,7 +37,7 @@ site_block() {
 }
 missing=0
 for pair in "xueqiu:news" "xueqiu:replies" "xueqiu:stock-notices" "xueqiu:user-articles" \
-            "xueqiu:comments" "web:article"; do
+            "xueqiu:comments" "xueqiu:hot" "web:article"; do
   site="${pair%%:*}"; cmd="${pair##*:}"
   if site_block "$site" | grep -qE "^    ${cmd}( |$)"; then
     echo "  OK   opencli $site $cmd"
