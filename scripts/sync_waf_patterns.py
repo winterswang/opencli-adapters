@@ -10,7 +10,7 @@ from pathlib import Path
 from xueqiu_analyzer.waf import CONTENT_PATTERNS, block_guard_js
 
 ADAPTERS_DIR = Path(__file__).resolve().parent.parent
-ADAPTER_FILES = ("news.js", "replies.js", "user-articles.js", "article.js")
+ADAPTER_FILES = ("news.js", "replies.js", "user-articles.js", "hot.js", "article.js")
 
 # // 定界符被 block_guard_js() 拒绝，因此 [^/]* 安全。
 _GUARD_RE = re.compile(r"(return /)([^/]*)(/\.test\(t\))")

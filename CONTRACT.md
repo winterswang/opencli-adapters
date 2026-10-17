@@ -101,6 +101,16 @@
 
 > **不要再把它加回来**：唯一曾经占优的维度是"风控提示语认得多"，而实测证明那个优势不存在（我们反而漏了真实发生的一种）。若将来需要更宽的检测，正确做法是把模式**提给上游**，不是在本地重新长一份覆盖。
 
+### 2.8 `opencli xueqiu hot`
+
+| | |
+|---|---|
+| 入参 | `--limit`（int，默认 20）、`--scrolls`（int，默认 3，上限 5；每次滚动 ≈ +8-10 条） |
+| 输出字段 | `rank`（1 起始，输出顺序位次）、`author`、`author_id`、`status_id`、`url`（归一化为 `https://xueqiu.com/<uid>/<status_id>`）、`text`（剥 HTML、截断 ~300 字）、`created_at`（相对时间解析为 ISO `+08:00`；解析失败的条目**整条丢弃**，形态表见 `lib/relative-time.js`）、`forwards`、`comments`、`likes`、`position`（站点 `analytics-data` 里的 0 起始排名） |
+| 错误 | `ArgumentError`（limit / scrolls 非法）、`AuthRequiredError`（热门 tab 依赖登录态）、`CommandExecutionError`（风控页 / 结构变更提取为空。**不武装熔断**，理由同 `comments.js` 内注释：检测器必须并入同源同步才有资格开域级开关） |
+| 消费者依赖 | `xueqiu-crawler` 每日早报「全网热门贴 Top10」（issue #8，适配器就绪后接入） |
+| 备注 | DOM 路径：首页 → 点「热门」tab → 站内滚动 XHR 加载（站点自身请求，不触发 WAF）。打包版 `listV3` 接口被 WAF 挑战页拦截才改走此路。编辑过的帖子时间形如 `修改于6小时前`，取的是**编辑时间**（DOM 无原发时间）；全文抓取由消费者对选中条目另行调 `web article` |
+
 ## 3. 错误码契约
 
 opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的 `error.code` 都是它）：
@@ -147,7 +157,7 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 
 ⚠️ **哪些命令会武装熔断**：只有抛出 `RISK_CODES`（`RATE_LIMITED` / `SECURITY_BLOCK` /
 `BLOCKED_WAF`）的命令。目前雪球侧**只有 `web article`**（`article.js` 抛 `BLOCKED_WAF`）；
-`news` / `replies` / `user-articles` 命中挑战页抛的是 `COMMAND_EXEC`、`comments` 抛的是
+`news` / `replies` / `user-articles` / `hot` 命中挑战页抛的是 `COMMAND_EXEC`、`comments` 抛的是
 `AUTH_REQUIRED`，**都不在 `RISK_CODES` 里**。这是**已知的不对称**：列表类命令撞上挑战页
 时熔断不会武装（`comments.js` 的检测器是自写正则、未并入同源同步，拿它去开域级开关的
 风险大于收益 —— 见该文件里的注释）。
