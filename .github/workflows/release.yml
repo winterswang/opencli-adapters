@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Install JS dependencies
+        run: npm ci
       - run: pip install ruff==0.12.4 pytest==7.4.3
       - run: pip install -e _deps/xueqiu-analyzer-skill
       - run: ruff check . && ruff format --check .
