@@ -1,6 +1,6 @@
 {
   "name": "opencli-adapters",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "雪球 opencli 本地适配器：news、replies、stock-notices、user-articles、comments、hot，以及通用网页正文命令 web article（xiaohongshu search 的覆盖已于 1.2.0 移除，改用官方基线）",
   "opencli": ">=1.8.8"
 }

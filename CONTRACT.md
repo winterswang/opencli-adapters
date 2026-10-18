@@ -132,8 +132,8 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 
 | 约定 | 内容 | 谁依赖 / 谁守着 |
 |---|---|---|
-| **超时预算** | 限速器的等待发生在 **opencli 子进程内部**，会被调用方 `subprocess.run(timeout=…)` 一并计时。最坏 = 取锁 2s + 长停 75s + 执行 ≈ **87s** | 调用方超时统一 120s：`opencli_extractor.py`、`fetcher_opencli.py`、`detail_fetcher.py`。crawler 侧有解析插件源码的双向守卫测试；monitor 侧见 §6 |
-| **6 秒下限** | **内置站点策略**（尤其 `web`）的 `min_delay_s` 不得低于 6。⚠️ 这不是全站硬下限：`DEFAULT_POLICY` 兜底是 **3**，用户 `rate-limits.json` 也不受它约束 | `scripts/schedule-checks/peak.mjs` 用「6 秒下限 ⇒ 一分钟不可能超过 10 次」判定「限速器被绕过」；守护测试 `test_builtin_sites_declare_web_with_pacing` **只断言 `web`**（`xueqiu`/`xiaohongshu` 是恰好达标，不在该不变量覆盖内） |
+| **超时预算** | 限速器的等待发生在 **opencli 子进程内部**，会被调用方 `subprocess.run(timeout=…)` 一并计时。最坏 = 取锁 2s + 间隔 12s + 长停 75s + **窗口有界等待 8s**（opencli-adapters#4）+ 执行 ≈ **97s** | 调用方超时统一 120s：`opencli_extractor.py`、`fetcher_opencli.py`、`detail_fetcher.py`。三仓守卫测试（本仓 `test_plugin_policy` / crawler `test_opencli_throttle` / monitor `test_opencli_contract`）解析插件源码里的 `max_delay_s` / `long_pause_max_s` / `window_wait_max_s` 做双向比对；改这三个数先算 120 - (2+12+75+W) 会不会 ≤ 20s 执行余量 |
+| **滚动小时额度** | `max_per_hour`（0 = 关）：任意滚动 60 分钟（`WINDOW_S`，写死）内对**同一域名键**的请求 ≤ N，超过时有界等待 ≤ `window_wait_max_s`、再超则**放行并打 `window_overflow` 标记**（软约束 —— 刻意不拒绝：钩子无中止 API，拒绝只能走假 profile → BROWSER_CONNECT 烧 45s 且把调用方赶进不记账回退，见 `lib/ratelimit.js` `planWindowSlot`）。内置只有 `xueqiu` 开（70/8s），其余键默认关；本机在 `~/.opencli/rate-limits.json` 的 `sites.xueqiu` 显式开启 | 硬约束（到点不发）要等消费方按窗口占用自行节流（xueqiu-crawler#107 跟进清单）；台账 `window_*` 四字段回答「这次调用是否因窗口等待/溢出」 |
 | **并发闸** | 默认 `concurrency` 缺省 = **观测模式**（只记录不拦）。启用（`concurrency: 1/2/3`）前**必须**把调用方超时抬到 ~150s | `lib/concurrency.js` 文件头 + README；`test_concurrency_gate_defaults_to_observe_only` |
 | **两份台账** | 插件台账 `~/.opencli/adapter-calls.jsonl` = 传输层真相；Python 台账 `~/.opencli/xueqiu-calls.jsonl` = 调用方意图与结局。用 `ppid` 或 `XUEQIU_OPENCLI_CALL_ID` join | `lib/requestlog.js` 文件头 |
 | **hook 注册** | `rate-limit.js` 必须保留 `onBeforeExecute(` 字样，否则 discovery 不加载它 → **整套限速与台账静默消失** | `tests/test_opencli_adapter_plugin_integrity.py` |
@@ -143,10 +143,10 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 
 | 路径 | 内容 | 谁写 |
 |---|---|---|
-| `~/.opencli/<域名键>-throttle.json` | 限频排期 `{next_at, calls, last_source}` | 插件 |
+| `~/.opencli/<域名键>-throttle.json` | 限频排期 `{next_at, calls, last_source}`；额度开启的键另有 `window`（滚动 60 分钟内的请求时间戳环，秒级 float，**未来预留也入环**，跨进程共享 —— 消费方要自己节流就读它：占用 = 数 `> now-3600` 的条目） | 插件 |
 | `~/.opencli/inflight/<域名键>/*.slot` | 在飞槽位（观测模式下也占位） | 插件 |
 | `~/.opencli/<域名键>-cooldown.json` | **风控熔断**状态 `{until_ms, level, reason, last_trip_ms, trips}`（`lib/cooldown.js`）：命中 `RISK_CODES` 后该站点在冷却期内发不出请求，指数退避 1h→2h→…→24h，距上次命中超 `decay_s` 则 level 归零 | 插件 |
-| `~/.opencli/adapter-calls.jsonl` | 插件台账（schema 2）。被熔断拦下的调用记 `cooldown_active` / `skip_reason: cooldown_active` —— **它没发出任何请求**，统计站请求量时要剔除 | 插件 |
+| `~/.opencli/adapter-calls.jsonl` | 插件台账（schema 2）。被熔断拦下的调用记 `cooldown_active` / `skip_reason: cooldown_active` —— **它没发出任何请求**，统计站请求量时要剔除。窗口额度四字段：`window_waited_ms`（因窗口等待的时长）、`window_overflow`（满了等不起、照发）、`window_needed_ms`（溢出时记录「本该等多久」）、`window_size`（本次入环后的占用；0 = 该键未开额度） | 插件 |
 | `~/.opencli/rate-limits.json` | 用户策略覆盖（`sites` / `domains` / `defaults`；`cooldown` 可每键覆盖，未声明键走默认：开、1h 起、24h 封顶） | 用户 |
 
 ⚠️ **冷却只对「有限速策略的键」真正生效**：`cooldownRemainingMs` 的检查点在该键的
@@ -172,6 +172,7 @@ opencli 的错误类带 `code`（插件台账的 `error_code`、Python 台账的
 | 改**命令名** | `scripts/analyze_opencli_usage.py` 的 `SITE_OPERATIONS`（**有测试守**）+ `install.sh` 的校验清单 + README 文件表（**无自动检查，靠人**） | `tests/test_opencli_command_names.py`（只覆盖 `SITE_OPERATIONS` 那半边；漏改 `install.sh` 它不会红，要到执行 `install.sh` 时才退出 1） |
 | 改**错误码/错误类** | 消费方的 `BLOCKED_WAF` / `EMPTY_RESULT` / `风控验证页` 判定 | ⚠️ 无自动检查 |
 | 改**节流参数**（`min/max/long_pause`） | 三个仓的调用方超时（`opencli_extractor.py` / `fetcher_opencli.py` / `detail_fetcher.py`） | 本仓 `test_plugin_policy.py` + 后续消费方契约测试 |
+| 改**窗口参数**（`max_per_hour` / `window_wait_max_s`） | 先算预算：120 > 取锁 2 + `max_delay_s` + `long_pause_max_s` + `window_wait_max_s` + 20s 执行余量；三仓守卫公式已含窗口项（`test_plugin_policy` / `test_opencli_throttle` / `test_opencli_contract`）。给**新键**开额度只动 `rate-limits.json`（builtin 只灰度 xueqiu，`test_other_builtin_sites_keep_rolling_quota_off` 钉着） | 本仓 `test_plugin_policy.py` + crawler / monitor 守卫 |
 | 改**`min_delay_s`** 低于 6 | `peak.mjs` 的 `PEAK_IMPOSSIBLE` 判据 | `test_builtin_sites_declare_web_with_pacing` |
 | 启用**并发闸** | 调用方超时 120 → ~150s（两个仓） | `test_concurrency_gate_defaults_to_observe_only` |
 | 改**域名别名表** | 已有键必须映射回自己（换名 = 排期清零） | `test_known_domains_alias_back_to_their_existing_keys` |

@@ -89,12 +89,31 @@ discoverClis(BUILTIN_CLIS) → discoverClis(USER_CLIS) → discoverPlugins()
   别名表 → 多级后缀规则 → 末两段兜底。解析不出就退回站点键（**不是**不限速）。
 - 查找链：**域名键 → 站点键 → 通配**。站点那一步不能省，否则
   `web article` 抓 cninfo（域名键 `cninfo.com.cn` 无专门配置）会变成「未声明即不限速」。
-- 状态：`~/.opencli/<域名键>-throttle.json`。
+- 状态：`~/.opencli/<域名键>-throttle.json`。开了滚动小时额度（见下）的键另有
+  `window` 时间戳环（60 分钟内的请求时刻，跨进程共享）；消费方要自行节流就数它。
 - ⚠️ **别名表必须把已有键映射回自己**（`xueqiu.com` → `xueqiu`，不是 `'xueqiu.com'`）：
   状态文件名由键直接决定，换名等于限速排期清零、下一次调用零间隔打出去。
 - ⚠️ 内置档的下限**不得低于 6 秒**：`scripts/schedule-checks/peak.mjs` 用
   「6 秒下限 ⇒ 一分钟不可能超过 10 次」判定「限速器被绕过」，低于 6 秒会让合法的
   批量公告下载被误报成绕过。
+
+### 滚动小时额度（`lib/ratelimit.js` 的 `planWindowSlot`）—— xueqiu 已灰度
+
+间隔 + 长停管的是「两次调用的间距」，管不住**总量**：2026-10-13 实测（opencli-adapters#4），
+雪球的墙按「任意滚动 60 分钟内 ≤ ~80 次详情页请求」计量，而 6–12s 间隔的等效速率
+≈330 次/小时，不在那个尺度上工作。
+
+- `max_per_hour`（默认 0 = 关）：任意滚动 60 分钟内同一域名键的请求 ≤ N。内置只有
+  `xueqiu` 开（70，留 ~12% 余量）；其它键要开在 `rate-limits.json` 里显式设。
+- 窗口满时：还要 ≤ `window_wait_max_s`（xueqiu 8s）就有章戳滑出 → **有界等待**到滑出时刻；
+  要等更久 → **放行**并在台账打 `window_overflow: true`（软约束）。刻意不拒绝：
+  钩子没有中止执行的 API（见 `lib/cooldown.js` 文件头），能用的拒绝手段只有假 profile
+  —— 那条路烧 ~45s、报 BROWSER_CONNECT，还会把调用方赶进不记账的 `browser` 回退。
+  溢出的调用**同样入环记账**（它们是真实请求）。
+- ⚠️ `window_wait_max_s` 进单次最坏等待预算（2 + 12 + 75 + 8 = 97s < 调用方 120s）。
+  调大之前先算三仓守卫测试的公式（`test_plugin_policy` / crawler `test_opencli_throttle`
+  / monitor `test_opencli_contract`）。
+- 硬约束（到点不发）要等消费方读 `window` 环自行节流（xueqiu-crawler#107 跟进清单）。
 
 ### 并发闸（`lib/concurrency.js`）—— 当前是**观测模式**
 
@@ -138,7 +157,8 @@ fail-open，**连限速一起失效**。
   "sites": {
     "xiaohongshu": { "min_delay_s": 15, "max_delay_s": 15 },
     "xueqiu": { "min_delay_s": 6, "max_delay_s": 12,
-                "long_pause_every": 30, "long_pause_min_s": 45, "long_pause_max_s": 75 },
+                "long_pause_every": 30, "long_pause_min_s": 45, "long_pause_max_s": 75,
+                "max_per_hour": 70, "window_wait_max_s": 8 },
     "web":    { "min_delay_s": 6, "max_delay_s": 8 }
   },
   "domains": {
@@ -148,6 +168,7 @@ fail-open，**连限速一起失效**。
 ```
 
 - 键可覆盖 `enabled` / `min_delay_s` / `max_delay_s` / `long_pause_*` /
+  `max_per_hour` / `window_wait_max_s`（滚动小时额度，见上节）/
   `skip_commands` / `state_path` / `concurrency` / `concurrency_enabled`；
   `sites` 按站点键、`domains` 按域名键，域名优先；`sites["*"]` 为通配。
 - **未声明的键不限速**（宁可漏，也不误伤本地命令）。
@@ -158,6 +179,8 @@ fail-open，**连限速一起失效**。
 | `OPENCLI_RATELIMIT_<域名键或站点键>_MIN/MAX_DELAY_SECONDS` | 按域名或站点覆盖间隔 |
 | `XUEQIU_OPENCLI_THROTTLE=0` | 只关 xueqiu（含打 xueqiu.com 的 `web` 调用） |
 | `XUEQIU_OPENCLI_MIN/MAX_DELAY_SECONDS`、`XUEQIU_OPENCLI_LONG_PAUSE_*` | xueqiu 专用数值覆盖 |
+| `XUEQIU_OPENCLI_MAX_PER_HOUR=0` | 只关 xueqiu 的滚动小时额度（怀疑额度逻辑惹祸时的逃逸舱） |
+| `OPENCLI_RATELIMIT_<键>_MAX_PER_HOUR` | 按域名或站点覆盖窗口额度 |
 | `XUEQIU_OPENCLI_THROTTLE_STATE` | 覆盖 xueqiu 的状态文件路径 |
 | `OPENCLI_ADAPTER_LOG` | 插件台账路径；`off` 关闭；验证时指到 `/tmp` 可隔离 |
 | `XUEQIU_OPENCLI_INFLIGHT_DIR` | 并发槽根目录（验证时隔离用） |

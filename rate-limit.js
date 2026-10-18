@@ -114,6 +114,13 @@ function guardFields(guard) {
     rate_waited_ms: ms(rate.waited_s),
     rate_reserved_ms: ms(rate.reserved_s),
     long_pause_ms: ms(rate.long_pause_s),
+    // 滚动小时额度（opencli-adapters#4）。window_size: 0 = 该键未启用额度；
+    // window_overflow: true = 窗口已满且要等超过 window_wait_max_s，本次**照发** ——
+    // 统计「是不是在窗口尺度上超发」就看这列，别拿 rate_waited_ms 猜。
+    window_waited_ms: ms(rate.window_waited_s),
+    window_overflow: rate.window_overflow ?? null,
+    window_needed_ms: ms(rate.window_needed_s),
+    window_size: rate.window_size ?? null,
     rate_error: guard.rateError ?? null,
     rate_fail_open: rate.fail_open ?? (guard.rateError ? true : null),
     // concurrency_max 为 null = 观测模式（只看不拦）。
