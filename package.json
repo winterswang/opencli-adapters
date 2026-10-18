@@ -3,5 +3,8 @@
   "version": "1.4.0",
   "private": true,
   "type": "module",
-  "description": "Local OpenCLI plugin; version is mirrored in opencli-plugin.json"
+  "description": "Local OpenCLI plugin; version is mirrored in opencli-plugin.json",
+  "dependencies": {
+    "@jackwener/opencli": "1.8.8"
+  }
 }
