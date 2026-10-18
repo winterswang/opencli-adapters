@@ -41,6 +41,13 @@ def _plugin_number(site: str, key: str) -> float:
     return float(found.group(1))
 
 
+def _plugin_number_or(site: str, key: str, default: float) -> float:
+    """宽容版：键没声明时返回 default（滚动窗口参数只在对额度有意的键上声明）。"""
+    policy = _plugin_policy_js(site)
+    found = re.search(rf"\b{re.escape(key)}\s*:\s*([0-9.]+)", policy)
+    return float(found.group(1)) if found else default
+
+
 def _plugin_const_ms(name: str) -> float:
     """读模块级毫秒常量（如 LOCK_WAIT_MS），换成秒."""
     src = plugin_source()
@@ -50,15 +57,16 @@ def _plugin_const_ms(name: str) -> float:
 
 
 def _plugin_worst_wait_seconds(site: str) -> float:
-    """单次调用在插件层可能被等待的最长时间 = 取锁轮询上限 + 预留等待上限.
+    """单次调用在插件层可能被等待的最长时间 = 取锁轮询上限 + 预留等待上限 + 窗口有界等待.
 
-    取锁那一段与预留等待是**相加**的（先拿到锁才预留、才 sleep），所以不能漏 ——
-    漏了会给出「120 够用」的虚假保证。
+    取锁那一段与预留等待、滚动窗口的有界等待（opencli-adapters#4）是**相加**的
+    （先拿到锁才预留、才 sleep），所以不能漏 —— 漏了会给出「120 够用」的虚假保证。
     """
     return (
         _plugin_const_ms("LOCK_WAIT_MS")
         + _plugin_number(site, "max_delay_s")
         + _plugin_number(site, "long_pause_max_s")
+        + _plugin_number_or(site, "window_wait_max_s", 0)
     )
 
 
@@ -125,4 +133,32 @@ def test_concurrency_gate_defaults_to_observe_only():
         assert not re.search(r"\bconcurrency\w*\s*:", chunk), (
             f"{label} 预设了 concurrency —— 开闸前必须先把调用方超时抬到 ~150s "
             "（见本测试 docstring），否则排队等待会顶破 120s"
+        )
+
+
+def test_xueqiu_declares_rolling_hour_quota():
+    """xueqiu 必须声明滚动小时额度（opencli-adapters#4 的灰度落点），带正的有界等待.
+
+    2026-10-13 实测墙是「滚动小时 ~80 次详情页请求」的额度，间隔+长停（≈330 次/小时）
+    不在那个尺度上。内置 70 留 ~12% 余量；window_wait_max_s 是「差几秒滑出窗口就等几秒」
+    的上限 —— 它进单次最坏等待预算（2 + 12 + 75 + 8 = 97s），调用方 120s 超时靠
+    20s 执行余量盖住（120 > 97 + 20）。两个数一起调大之前，先算三仓守卫会不会红。
+    """
+    assert _plugin_number("xueqiu", "max_per_hour") >= 1, (
+        "xueqiu 没声明滚动小时额度 —— 对墙的额度尺度失去保护（opencli-adapters#4）"
+    )
+    assert _plugin_number("xueqiu", "window_wait_max_s") > 0, (
+        "xueqiu 的窗口有界等待为 0 —— 「差几秒滑出」的调用会白白溢出"
+    )
+
+
+def test_other_builtin_sites_keep_rolling_quota_off():
+    """web / xiaohongshu 不跟 xueqiu 一起灰度：额度默认关（0 = 不记账不等待）.
+
+    墙是雪球详情页实测出来的；给别的站开额度只会让它们平白等待/溢出标记，
+    出了问题还查不到参照。要开就在 `~/.opencli/rate-limits.json` 按键显式设。
+    """
+    for site in ("web", "xiaohongshu"):
+        assert _plugin_number_or(site, "max_per_hour", 0) == 0, (
+            f"{site} 的内置额度应当保持关闭（opencli-adapters#4 只灰度 xueqiu）"
         )
