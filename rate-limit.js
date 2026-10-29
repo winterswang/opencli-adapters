@@ -56,6 +56,7 @@ import {
   tripCooldown,
 } from './lib/cooldown.js';
 import { appendRecord, callerInfo, pickTarget, stripInternalArgs, truncate } from './lib/requestlog.js';
+import { redactArgs } from './lib/redact.js';
 
 /** 谁、何时、打哪条命令 —— 与调用方身份（靠继承来的环境变量认，不需要调用方配合）。 */
 function callIdentity(ctx, guard) {
@@ -95,9 +96,10 @@ function callIdentity(ctx, guard) {
 function safeArgsJson(args) {
   try {
     const visible = stripInternalArgs(args);
-    return visible && Object.keys(visible).length
-      ? truncate(JSON.stringify(visible), 600)
-      : null;
+    if (!visible || !Object.keys(visible).length) return null;
+    // 脱敏后再序列化：`args.url` 与 `args.token` 这类字段会原样进台账
+    // （opencli-adapters#2）。遮 value 不遮 key，保留归因能力。
+    return truncate(JSON.stringify(redactArgs(visible)), 600);
   } catch {
     return null; // 循环引用之类
   }
