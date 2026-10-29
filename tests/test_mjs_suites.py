@@ -5,8 +5,11 @@
 就是 JS），缺了就该红而不是跳过。
 
 新增 mjs 测试**不需要改这里**：自动发现 `tests/*.mjs`。此前每个 mjs 都要配一份
-几乎相同的包装（见 `test_plugin_rolling_window_mjs.py` 的旧形态），代价是最新加的
-`test_xhs_challenge_classify.mjs` 一直没进 CI。
+几乎相同的包装（见 `test_plugin_rolling_window_mjs.py` 的旧形态）。
+
+`NEEDS_LOCAL_OPENCLI` 里的测试读本机 `~/.opencli/clis/...` 的站点脚本，CI 上没有
+那份安装，跑起来是 ENOENT 而不是断言失败 —— 这类必须显式列出并写明原因，不能
+靠「忘了加包装」来跳过。
 """
 
 from __future__ import annotations
@@ -17,6 +20,15 @@ from pathlib import Path
 import pytest
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
+
+# 依赖本机 opencli 安装的 mjs 测试：文件名 -> 原因。CI 里跳过，本地手动跑。
+NEEDS_LOCAL_OPENCLI = {
+    "test_xhs_challenge_classify.mjs": (
+        "读 ~/.opencli/clis/xiaohongshu/search.js 按真实实现分类风控页；"
+        "CI 没有本机 opencli 安装，缺文件会变成 ENOENT 假失败"
+    ),
+}
+
 MJS_FILES = sorted((PLUGIN_DIR / "tests").glob("*.mjs"))
 
 
@@ -25,8 +37,15 @@ def test_mjs_suites_discovered():
     assert MJS_FILES, "tests/ 下一个 .mjs 行为测试都没有 —— 被删了？"
 
 
-@pytest.mark.parametrize("mjs", MJS_FILES, ids=lambda p: p.stem)
+@pytest.mark.parametrize(
+    "mjs",
+    MJS_FILES,
+    ids=lambda p: p.stem,
+)
 def test_mjs_suite(mjs: Path):
+    reason = NEEDS_LOCAL_OPENCLI.get(mjs.name)
+    if reason:
+        pytest.skip(reason)
     result = subprocess.run(
         ["node", str(mjs)],
         capture_output=True,
