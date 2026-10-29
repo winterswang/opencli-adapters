@@ -2,6 +2,8 @@ import { cli, Strategy } from '@jackwener/opencli/registry';
 import { ArgumentError, CliError } from '@jackwener/opencli/errors';
 import { htmlToMarkdown } from '@jackwener/opencli/utils';
 
+import { gotoArticle } from './lib/article-fetch.js';
+
 // 正文容器候选（按"精确度"排序，先命中先用）。
 // 与 xueqiu-monitor/src/detail_fetcher.py 的 _ARTICLE_SELECTORS 逐项一致 ——
 // 那份是 2026-09-20 实测出来的：新浪 div.article = 正文、.article-content =
@@ -82,14 +84,15 @@ cli({
         if (!HTTP_URL_PATTERN.test(rawUrl)) {
             throw new ArgumentError('web article requires an absolute http(s) URL: ' + rawUrl);
         }
-        // http → https：沿用 xueqiu-monitor detail_fetcher 的既有行为（cninfo 的
-        // 公告链接是 http://，站点本身支持 https）。
-        const url = rawUrl.replace(/^http:\/\//i, 'https://');
+        // http → https 只是**首选**：cninfo 的公告链接是 http://、站点本身支持
+        // https，沿用 xueqiu-monitor detail_fetcher 的既有行为。只支持 HTTP 的
+        // 站点升级后会直接不可访问，所以导航失败要回退原地址（见 lib/article-fetch.js，
+        // opencli-adapters#3）。
         const minChars = Math.max(1, Number(kwargs['min-chars']) || 300);
         const onlySelector = String(kwargs.selector ?? '').trim();
         const selectors = onlySelector ? [onlySelector] : ARTICLE_SELECTORS;
 
-        await page.goto(url);
+        const url = await gotoArticle(page, rawUrl);
         const guard = await page.evaluate(BLOCK_GUARD);
         if (guard === 'BLOCKED') {
             // 用专属错误码而不是 CommandExecutionError(COMMAND_EXEC)：调用方需要
