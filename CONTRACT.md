@@ -52,6 +52,7 @@
 | 输出字段 | `url`、`title`、**`content`（markdown 全文）**、`selector`、`chars` |
 | 错误 | `ArgumentError`（非绝对 URL）、`CliError('BLOCKED_WAF', …)`（**风控页，确定性信号，不要重试**） |
 | 消费者依赖 | `opencli_extractor._attempt_via_adapter`、`monitor/src/detail_fetcher._opencli_article`：取 `title/content/selector` |
+| 协议 | `http://` 输入会**优先**按 `https://` 抓取（cninfo 等站点支持 HTTPS）；HTTPS 导航失败时回退原始 HTTP 地址，且只回退一次。输出的 `url` 是**实际抓到的那一个** |
 | 备注 | `content` **不在** `columns` 里（表格视图只显示 url/title/chars/selector），别拿 `columns` 当输出契约 |
 
 ### 2.3 `opencli xueqiu comments <symbol>`
