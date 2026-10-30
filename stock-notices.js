@@ -4,7 +4,11 @@ import { fetchXueqiuJson, formatChinaDate } from './utils.js';
 import { normalizeXueqiuSymbol } from './lib/xueqiu-symbol.js';
 
 // Symbol normalization mirroring the packaged comments.js contract.
-const XUEQIU_SYMBOL_PATTERN = /^(?:[A-Z]{2}\d{5,6}|\d{4,6}|[A-Z]{1,5}(?:\.[.-][A-Z]{1,2})?)$/;
+// 股份类别的分隔符只占一个字符：`BRK.B` / `BRK-B` 都要过。
+// 2026-10-30 事故：这里原来写成 `(?:\.[.-][A-Z]{1,2})?`（先点再点/横线，两个分隔符），
+// 于是 `opencli xueqiu stock-notices BRK.B` 直接抛 ARGUMENT，池子新入的 BRK.B.US
+// 每轮都记一条 source_failures。comments.js 的同一正则是对的，这里是对齐时抄错。
+const XUEQIU_SYMBOL_PATTERN = /^(?:[A-Z]{2}\d{5,6}|\d{4,6}|[A-Z]{1,5}(?:[.-][A-Z]{1,2})?)$/;
 
 function normalizeSymbolInput(raw) {
     const symbol = String(raw ?? '').trim().replace(/^\$/, '').toUpperCase();
@@ -90,3 +94,5 @@ cli({
         return rows.slice(0, limit);
     },
 });
+
+export { normalizeSymbolInput, XUEQIU_SYMBOL_PATTERN };
